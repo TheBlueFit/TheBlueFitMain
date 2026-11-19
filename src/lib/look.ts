@@ -5,20 +5,23 @@ export type PaletteId = "classic" | "ocean" | "violet" | "rose" | "ember" | "min
 export type StyleId = "original" | "glass" | "vintage" | "oldgym" | "moderngym" | "navy" | "forest" | "coral";
 export type BlurId = "off" | "soft" | "strong";
 export type SceneId = "auto" | "night" | "morning" | "afternoon" | "evening" | "off";
-export interface Look { palette: PaletteId; vibrancy: number; motion: "on" | "off"; style: StyleId; scene: SceneId; blur: BlurId }
+export type DepthId = "off" | "subtle" | "immersive";
+export interface Look { palette: PaletteId; vibrancy: number; motion: "on" | "off"; style: StyleId; scene: SceneId; blur: BlurId; depth: DepthId }
 export type RGB = [number, number, number];
 
 export interface RolePolicy {
   allowCustomize: boolean; styles: StyleId[]; palettes: PaletteId[]; scenes: SceneId[]; themes: ("dark" | "light")[];
   allowMotionToggle: boolean; allowVibrancy: boolean; allowBlur?: boolean; resetCounter: number;
-  defaults: { style: StyleId; palette: PaletteId; scene: SceneId; theme: "dark" | "light"; motion: "on" | "off"; vibrancy: number; blur?: BlurId };
+  /** 3D depth levels people may pick. Missing on older servers = all allowed. */
+  depths?: DepthId[];
+  defaults: { style: StyleId; palette: PaletteId; scene: SceneId; theme: "dark" | "light"; motion: "on" | "off"; vibrancy: number; blur?: BlurId; depth?: DepthId };
 }
 
 export const LOOK_KEY = "bluefit_look";
 export const THEME_KEY = "bluefit_theme";
 export const POLICY_KEY = "bluefit_policy";
 export const RESET_KEY = "bluefit_look_reset";
-export const DEFAULT_LOOK: Look = { palette: "classic", vibrancy: 100, motion: "on", style: "original", scene: "auto", blur: "soft" };
+export const DEFAULT_LOOK: Look = { palette: "classic", vibrancy: 100, motion: "on", style: "original", scene: "auto", blur: "soft", depth: "subtle" };
 
 /** Surface / typography styles. `palette` is the colour set each one is suggested with (changeable afterwards). */
 export const STYLES: { id: StyleId; label: string; blurb: string; palette: PaletteId }[] = [
@@ -34,6 +37,13 @@ export const STYLES: { id: StyleId; label: string; blurb: string; palette: Palet
 
 export const BLURS: { id: BlurId; label: string }[] = [
   { id: "off", label: "Off" }, { id: "soft", label: "Soft" }, { id: "strong", label: "Strong" },
+];
+
+/** 3D depth. Needs Animations on; the device can still scale it down (see src/lib/depth.ts). */
+export const DEPTHS: { id: DepthId; label: string; blurb: string }[] = [
+  { id: "off", label: "Flat", blurb: "No 3D effects" },
+  { id: "subtle", label: "Subtle", blurb: "Cards tilt under your finger" },
+  { id: "immersive", label: "Immersive", blurb: "Cards follow your phone's movement and screens rise into place in 3D as you scroll" },
 ];
 
 export const SCENES: { id: SceneId; label: string }[] = [
@@ -113,9 +123,11 @@ export function clampLook(look: Look, theme: "dark" | "light", pol: RolePolicy |
   const has = (a: string[], v: string) => a.indexOf(v) >= 0;
   if (!pol.allowCustomize) { hasLook = false; hasTheme = false; }
   const dBlur = d.blur || "soft";
-  let out: Look = { palette: look.palette, vibrancy: look.vibrancy, motion: look.motion, style: look.style, scene: look.scene, blur: look.blur || dBlur };
+  const depths: string[] = pol.depths && pol.depths.length ? pol.depths : ["off", "subtle", "immersive"];
+  const dDepth = (d.depth && has(depths, d.depth) ? d.depth : depths.indexOf("subtle") >= 0 ? "subtle" : depths[0]) as DepthId;
+  let out: Look = { palette: look.palette, vibrancy: look.vibrancy, motion: look.motion, style: look.style, scene: look.scene, blur: look.blur || dBlur, depth: look.depth || dDepth };
   if (!hasLook) {
-    out = { palette: d.palette, vibrancy: d.vibrancy, motion: d.motion, style: d.style, scene: d.scene, blur: dBlur };
+    out = { palette: d.palette, vibrancy: d.vibrancy, motion: d.motion, style: d.style, scene: d.scene, blur: dBlur, depth: dDepth };
   } else {
     if (!has(pol.styles, out.style)) out.style = d.style;
     if (!has(pol.palettes, out.palette)) out.palette = d.palette;
@@ -124,6 +136,7 @@ export function clampLook(look: Look, theme: "dark" | "light", pol: RolePolicy |
     if (!pol.allowVibrancy) out.vibrancy = d.vibrancy;
     if (pol.allowBlur === false) out.blur = dBlur;
   }
+  if (!has(depths, out.depth)) out.depth = dDepth;
   const th = hasTheme && has(pol.themes, theme) ? theme : d.theme;
   return { look: out, theme: th };
 }
@@ -143,6 +156,7 @@ export function readLookRaw(): { look: Look; has: boolean } {
         style: STYLES.some((x) => x.id === raw.style) ? raw.style : "original",
         scene: SCENES.some((x) => x.id === raw.scene) ? raw.scene : "auto",
         blur: BLURS.some((x) => x.id === raw.blur) ? raw.blur : "soft",
+        depth: DEPTHS.some((x) => x.id === raw.depth) ? raw.depth : "subtle",
       } };
     }
   } catch {}
@@ -160,6 +174,7 @@ export function applyLook(look: Look, theme: "dark" | "light") {
   root.setAttribute("data-style", look.style);
   root.setAttribute("data-scene-on", look.scene === "off" ? "0" : "1");
   root.setAttribute("data-blur", look.blur || "soft");
+  root.setAttribute("data-depth-mode", look.depth || "subtle");
 }
 
 export function saveLook(look: Look) {
@@ -175,12 +190,12 @@ var P=${JSON.stringify(PALETTES)},ls=function(k){try{return localStorage.getItem
 var L=null,pc=null,pol=null;try{L=JSON.parse(ls('${LOOK_KEY}')||'null')}catch(e){}try{pc=JSON.parse(ls('${POLICY_KEY}')||'null')}catch(e){}
 if(pc&&pc.policy)pol=pc.policy;
 var rm=window.matchMedia&&window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-var look={palette:(L&&L.palette)||'classic',vibrancy:(L&&L.vibrancy)||100,motion:L?(L.motion==='off'?'off':'on'):(rm?'off':'on'),style:(L&&L.style)||'original',scene:(L&&L.scene)||'auto',blur:(L&&L.blur)||''};
+var look={palette:(L&&L.palette)||'classic',vibrancy:(L&&L.vibrancy)||100,motion:L?(L.motion==='off'?'off':'on'):(rm?'off':'on'),style:(L&&L.style)||'original',scene:(L&&L.scene)||'auto',blur:(L&&L.blur)||'',depth:(L&&L.depth)||'subtle'};
 var t=ls('${THEME_KEY}');var hasTheme=t==='light'||t==='dark';var th=hasTheme?t:'dark';
 var cl=${clampLook.toString()};var c=cl(look,th,pol,!!L,hasTheme);look=c.look;th=c.theme;if(!look.blur)look.blur='soft';
 var r=document.documentElement;r.setAttribute('data-theme',th);r.style.colorScheme=th;
 var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('content',th==='light'?'#F3F4F7':'#000000');
 var f=${computeLookVars.toString()};var v=f(look,th,P);
 if(v){for(var n in v){r.style.setProperty(n,v[n])}}
-r.setAttribute('data-palette',look.palette);r.setAttribute('data-motion',look.motion);r.setAttribute('data-style',look.style);r.setAttribute('data-scene-on',look.scene==='off'?'0':'1');r.setAttribute('data-blur',look.blur);
+r.setAttribute('data-palette',look.palette);r.setAttribute('data-motion',look.motion);r.setAttribute('data-style',look.style);r.setAttribute('data-scene-on',look.scene==='off'?'0':'1');r.setAttribute('data-blur',look.blur);r.setAttribute('data-depth-mode',look.depth||'subtle');
 }catch(e){}})();`;

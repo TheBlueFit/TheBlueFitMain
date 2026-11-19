@@ -3367,13 +3367,15 @@ def cleanup_history(user: dict = Depends(require_roles('ADMIN'))):
 # ---------------------------------------------------------------------------
 # APPEARANCE POLICY (admin decides what clients and coaches may customise)
 # Stored as one item. The app reads its own role's slice and clamps the user's saved look to it.
-# Keep these id lists in step with src/lib/look.ts (STYLES / PALETTES / SCENES).
+# Keep these id lists in step with src/lib/look.ts (STYLES / PALETTES / SCENES / BLURS / DEPTHS).
 # ---------------------------------------------------------------------------
 
-APPEARANCE_STYLE_IDS = ('original', 'glass', 'vintage', 'oldgym', 'moderngym')
-APPEARANCE_PALETTE_IDS = ('classic', 'ocean', 'violet', 'rose', 'ember', 'mint', 'graphite', 'sepia', 'volt')
+APPEARANCE_STYLE_IDS = ('original', 'glass', 'vintage', 'oldgym', 'moderngym', 'navy', 'forest', 'coral')
+APPEARANCE_PALETTE_IDS = ('classic', 'ocean', 'violet', 'rose', 'ember', 'mint', 'graphite', 'sepia', 'volt', 'azure', 'emerald', 'coral')
 APPEARANCE_SCENE_IDS = ('auto', 'night', 'morning', 'afternoon', 'evening', 'off')
 APPEARANCE_THEME_IDS = ('dark', 'light')
+APPEARANCE_BLUR_IDS = ('off', 'soft', 'strong')
+APPEARANCE_DEPTH_IDS = ('off', 'subtle', 'immersive')
 APPEARANCE_ROLES = ('CLIENT', 'COACH')
 APPEARANCE_KEY = {'PK': 'SYSTEM#SETTINGS', 'SK': 'APPEARANCE'}
 
@@ -3383,8 +3385,10 @@ def default_role_appearance() -> dict:
         'allowCustomize': True,
         'styles': list(APPEARANCE_STYLE_IDS), 'palettes': list(APPEARANCE_PALETTE_IDS),
         'scenes': list(APPEARANCE_SCENE_IDS), 'themes': list(APPEARANCE_THEME_IDS),
-        'allowMotionToggle': True, 'allowVibrancy': True,
-        'defaults': {'style': 'original', 'palette': 'classic', 'scene': 'auto', 'theme': 'dark', 'motion': 'on', 'vibrancy': 100},
+        'depths': list(APPEARANCE_DEPTH_IDS),
+        'allowMotionToggle': True, 'allowVibrancy': True, 'allowBlur': True,
+        'defaults': {'style': 'original', 'palette': 'classic', 'scene': 'auto', 'theme': 'dark', 'motion': 'on', 'vibrancy': 100,
+                     'blur': 'soft', 'depth': 'subtle'},
         'resetCounter': 0,
     }
 
@@ -3410,8 +3414,12 @@ def normalize_role_appearance(raw: Any, previous: dict, label: str) -> dict:
         'palettes': _pick_ids(raw.get('palettes'), APPEARANCE_PALETTE_IDS, f'{label} colours'),
         'scenes': _pick_ids(raw.get('scenes'), APPEARANCE_SCENE_IDS, f'{label} scenery'),
         'themes': _pick_ids(raw.get('themes'), APPEARANCE_THEME_IDS, f'{label} themes'),
+        # older admin screens don't send depths: keep what was saved before
+        'depths': _pick_ids(raw['depths'], APPEARANCE_DEPTH_IDS, f'{label} depth') if 'depths' in raw
+                  else list(previous.get('depths') or APPEARANCE_DEPTH_IDS),
         'allowMotionToggle': bool(raw.get('allowMotionToggle', True)),
         'allowVibrancy': bool(raw.get('allowVibrancy', True)),
+        'allowBlur': bool(raw.get('allowBlur', True)),
     }
     d = raw.get('defaults') or {}
     try:
@@ -3421,8 +3429,12 @@ def normalize_role_appearance(raw: Any, previous: dict, label: str) -> dict:
     defaults = {
         'style': d.get('style'), 'palette': d.get('palette'), 'scene': d.get('scene'), 'theme': d.get('theme'),
         'motion': d.get('motion') if d.get('motion') in ('on', 'off') else 'on', 'vibrancy': max(40, min(100, vib)),
+        'blur': d.get('blur', 'soft'),
+        'depth': d.get('depth') or ('subtle' if 'subtle' in out['depths'] else out['depths'][0]),
     }
-    for key, allowed in (('style', 'styles'), ('palette', 'palettes'), ('scene', 'scenes'), ('theme', 'themes')):
+    if defaults['blur'] not in APPEARANCE_BLUR_IDS:
+        raise HTTPException(status_code=400, detail=f'{label}: unknown menu background option.')
+    for key, allowed in (('style', 'styles'), ('palette', 'palettes'), ('scene', 'scenes'), ('theme', 'themes'), ('depth', 'depths')):
         if defaults[key] not in out[allowed]:
             raise HTTPException(status_code=400, detail=f'{label}: the default {key} must be one of the allowed options.')
     out['defaults'] = defaults
@@ -3437,7 +3449,10 @@ def load_appearance_policy() -> dict:
         base = default_role_appearance()
         stored = (item.get('roles') or {}).get(role)
         if isinstance(stored, dict):
+            base_defaults = dict(base['defaults'])
             base.update({k: stored[k] for k in base if k in stored})
+            # settings saved before newer options existed gain their defaults instead of missing keys
+            base['defaults'] = {**base_defaults, **(stored.get('defaults') or {})}
         roles[role] = parse_decimals(base)
     return {'roles': roles, 'updatedAt': item.get('updatedAt'), 'updatedBy': item.get('updatedBy')}
 

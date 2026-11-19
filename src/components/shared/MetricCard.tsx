@@ -1,9 +1,8 @@
 "use client";
 
-import React, { ReactNode, useEffect, useRef, useState } from "react";
+import React, { ReactNode, useEffect, useState } from "react";
 import ShapeFiller, { FillerShape } from "@/components/shared/ShapeFiller";
 import { mix } from "@/lib/format";
-import { useTilt } from "@/components/depth/useTilt";
 
 interface MetricCardProps {
   title: string;
@@ -37,8 +36,6 @@ export default function MetricCard({
       : Math.min(100, Math.max(0, Number(progress) || 0));
 
   const [animatedProgress, setAnimatedProgress] = useState(0);
-  const cardRef = useRef<HTMLDivElement>(null);
-  useTilt(cardRef);
 
   useEffect(() => {
     if (numericProgress === null) return;
@@ -64,7 +61,6 @@ export default function MetricCard({
 
   return (
     <div
-      ref={cardRef}
       className={`metric-card bf-premium-surface ${compact ? "compact" : ""}`}
       style={{
         ["--metric-accent" as string]: accent,

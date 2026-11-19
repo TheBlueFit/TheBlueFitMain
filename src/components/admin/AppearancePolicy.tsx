@@ -3,13 +3,23 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Check, Loader2, Save } from "lucide-react";
 import { AppearancePolicyAll, dashboardAPI } from "@/services/api";
-import { BLURS, PALETTES, RolePolicy, SCENES, STYLES } from "@/lib/look";
+import { BLURS, DEPTHS, PALETTES, RolePolicy, SCENES, STYLES } from "@/lib/look";
 
 type RoleKey = "CLIENT" | "COACH";
 const ROLE_LABEL: Record<RoleKey, string> = { CLIENT: "Clients", COACH: "Coaches" };
 const THEMES: { id: "dark" | "light"; label: string }[] = [{ id: "dark", label: "Dark" }, { id: "light", label: "Light" }];
 const rgb = (c: number[]) => `rgb(${c[0]} ${c[1]} ${c[2]})`;
 const field: React.CSSProperties = { background: "rgb(var(--well-rgb) / 0.4)", border: "1px solid var(--border-subtle)", borderRadius: 10, color: "var(--text-primary)", padding: "10px 12px", fontSize: 16, outline: "none", width: "100%", boxSizing: "border-box" };
+/** Older servers don't send the depth fields yet: treat that as "all depths allowed, Subtle by default". */
+const withDepth = (roles: Record<RoleKey, RolePolicy>): Record<RoleKey, RolePolicy> => {
+  const out = JSON.parse(JSON.stringify(roles)) as Record<RoleKey, RolePolicy>;
+  (Object.keys(out) as RoleKey[]).forEach((r) => {
+    const pol = out[r];
+    if (!pol.depths || !pol.depths.length) pol.depths = DEPTHS.map((d) => d.id);
+    if (!pol.defaults.depth || !pol.depths.includes(pol.defaults.depth)) pol.defaults.depth = pol.depths.includes("subtle") ? "subtle" : pol.depths[0];
+  });
+  return out;
+};
 const heading: React.CSSProperties = { margin: 0, display: "block", marginBottom: 8 };
 
 function Chip({ on, onClick, children, disabled }: { on: boolean; onClick: () => void; children: React.ReactNode; disabled?: boolean }) {
@@ -43,7 +53,7 @@ export default function AppearancePolicy() {
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
-    dashboardAPI.getAppearancePolicy().then((d) => { setData(d); setDraft(JSON.parse(JSON.stringify(d.roles))); }).catch((e) => setMsg({ ok: false, text: e.message || "Could not load settings." }));
+    dashboardAPI.getAppearancePolicy().then((d) => { const roles = withDepth(d.roles); setData({ ...d, roles }); setDraft(JSON.parse(JSON.stringify(roles))); }).catch((e) => setMsg({ ok: false, text: e.message || "Could not load settings." }));
   }, []);
 
   const p = draft?.[role];
@@ -52,9 +62,9 @@ export default function AppearancePolicy() {
   const patch = (changes: Partial<RolePolicy>) => { setMsg(null); setDraft((d) => d && ({ ...d, [role]: { ...d[role], ...changes } })); };
 
   /** toggle an option in a list; keeps at least one, and repairs the default if it was just removed */
-  const toggleIn = <K extends "styles" | "palettes" | "scenes" | "themes">(key: K, id: string, defKey: "style" | "palette" | "scene" | "theme") => {
+  const toggleIn = <K extends "styles" | "palettes" | "scenes" | "themes" | "depths">(key: K, id: string, defKey: "style" | "palette" | "scene" | "theme" | "depth") => {
     if (!p) return;
-    const list = p[key] as string[];
+    const list = (p[key] || []) as string[];
     const next = list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
     if (!next.length) return;
     const defaults = { ...p.defaults };
@@ -70,7 +80,8 @@ export default function AppearancePolicy() {
       const roles: any = {};
       (["CLIENT", "COACH"] as RoleKey[]).forEach((r) => { roles[r] = { ...draft[r], resetNow: resetNow[r] }; });
       const saved = await dashboardAPI.saveAppearancePolicy(roles);
-      setData(saved); setDraft(JSON.parse(JSON.stringify(saved.roles))); setResetNow({ CLIENT: false, COACH: false });
+      const savedRoles = withDepth(saved.roles);
+      setData({ ...saved, roles: savedRoles }); setDraft(JSON.parse(JSON.stringify(savedRoles))); setResetNow({ CLIENT: false, COACH: false });
       setMsg({ ok: true, text: "Saved. Users get the new settings the next time their app refreshes (within minutes, or on next open)." });
     } catch (e: any) { setMsg({ ok: false, text: e.message || "Could not save." }); }
     finally { setSaving(false); }
@@ -118,6 +129,11 @@ export default function AppearancePolicy() {
             <span className="plan-item-category" style={heading}>Themes allowed</span>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{THEMES.map((t) => <Chip key={t.id} on={p.themes.includes(t.id)} onClick={() => toggleIn("themes", t.id, "theme")}>{t.label}</Chip>)}</div>
           </div>
+          <div>
+            <span className="plan-item-category" style={heading}>Depth (3D) allowed</span>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>{DEPTHS.map((d) => <Chip key={d.id} on={!!p.depths?.includes(d.id)} onClick={() => toggleIn("depths", d.id, "depth")}>{d.label}</Chip>)}</div>
+            <span style={{ display: "block", fontSize: 11, color: "var(--text-secondary)", marginTop: 6 }}>Subtle: cards tilt when touched. Immersive: cards also follow the phone&apos;s movement and screens rise into place in 3D as you scroll. Low-end phones automatically get a lighter version.</span>
+          </div>
           <Switch label="Allow the vibrancy slider" checked={p.allowVibrancy} onChange={(v) => patch({ allowVibrancy: v })} />
           <Switch label="Allow changing the menu background blur" hint="The blur behind the open navigation menu" checked={p.allowBlur !== false} onChange={(v) => patch({ allowBlur: v })} />
           <Switch label="Allow turning animations on / off" checked={p.allowMotionToggle} onChange={(v) => patch({ allowMotionToggle: v })} />
@@ -136,6 +152,8 @@ export default function AppearancePolicy() {
               <select value={p.defaults.theme} onChange={(e) => setDefault("theme", e.target.value)} style={field}>{THEMES.filter((t) => p.themes.includes(t.id)).map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}</select></label>
             <label><span style={{ fontSize: 11, color: "var(--text-secondary)" }}>Animations</span>
               <select value={p.defaults.motion} onChange={(e) => setDefault("motion", e.target.value)} style={field}><option value="on">On</option><option value="off">Off</option></select></label>
+            <label><span style={{ fontSize: 11, color: "var(--text-secondary)" }}>Depth (3D)</span>
+              <select value={p.defaults.depth ?? "subtle"} onChange={(e) => setDefault("depth", e.target.value)} style={field}>{DEPTHS.filter((d) => p.depths?.includes(d.id)).map((d) => <option key={d.id} value={d.id}>{d.label}</option>)}</select></label>
             <label><span style={{ fontSize: 11, color: "var(--text-secondary)" }}>Menu background</span>
               <select value={p.defaults.blur ?? "soft"} onChange={(e) => setDefault("blur", e.target.value)} style={field}>{BLURS.map((b) => <option key={b.id} value={b.id}>{b.label}</option>)}</select></label>
           </div>

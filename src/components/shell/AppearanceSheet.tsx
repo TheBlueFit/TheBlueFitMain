@@ -3,7 +3,7 @@
 import React from "react";
 import { Check, Moon, RotateCcw, Sun, X } from "lucide-react";
 import { useTheme } from "@/components/shell/ThemeProvider";
-import { BLURS, clampVibrancy, computeLookVars, PALETTES, SCENES, STYLES } from "@/lib/look";
+import { BLURS, clampVibrancy, computeLookVars, DEPTHS, PALETTES, SCENES, STYLES } from "@/lib/look";
 
 const rgb = (c: number[]) => `rgb(${c[0]} ${c[1]} ${c[2]})`;
 
@@ -16,6 +16,7 @@ export default function AppearanceSheet({ onClose }: { onClose: () => void }) {
   const canVibrancy = !policy || policy.allowVibrancy;
   const canMotion = !policy || policy.allowMotionToggle;
   const canBlur = !policy || policy.allowBlur !== false;
+  const depths = DEPTHS.filter((x) => !policy || !policy.depths?.length || policy.depths.includes(x.id));
 
   const swatch = (id: (typeof PALETTES)[number]["id"]) => {
     const pal = PALETTES.find((p) => p.id === id)!;
@@ -114,6 +115,19 @@ export default function AppearanceSheet({ onClose }: { onClose: () => void }) {
           })}
         </div>
         <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 22 }}>Auto follows your phone's clock: stars at night, a breeze and birds in the morning, sun and butterflies in the afternoon, fireflies at sunset.</div>
+        </>)}
+
+        {depths.length > 1 && (<>
+        <span style={label}>Depth (3D)</span>
+        <div style={{ display: "flex", gap: 10, marginBottom: 8 }}>
+          {depths.map((d) => (
+            <button key={d.id} type="button" style={seg(look.depth === d.id)} aria-pressed={look.depth === d.id} onClick={() => setLook({ depth: d.id })}>{d.label}</button>
+          ))}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-secondary)", marginBottom: 22 }}>
+          {DEPTHS.find((d) => d.id === look.depth)?.blurb}
+          {look.motion === "off" && look.depth !== "off" ? " (turn Animations on to see it)." : "."}
+        </div>
         </>)}
 
         {canBlur && (<>

@@ -3987,59 +3987,105 @@ body {
 :root[data-blur="soft"]   { --nav-blur: 7px;  --nav-dim: 0.38; }
 :root[data-blur="strong"] { --nav-blur: 14px; --nav-dim: 0.42; }
 
+
 /* =========================================================================================
-   DEPTH (3D) LAYER  -  see src/lib/depth.ts and src/components/depth/useTilt.ts
-   Only transform + opacity change per frame, so the GPU composites it without repainting.
-   <html data-depth="off|lite|full"> is set from the Animations switch and the device.
+   DEPTH (3D) LAYER  -  engine in src/lib/depth.ts, setting in Appearance > Depth (admin can limit it)
+   <html data-depth="off|lite|full">           what the device can afford
+   <html data-depth-mode="off|subtle|immersive"> what the user (or admin default) picked
+   Only transform and opacity animate, so Android's GPU composites everything without repainting.
    ========================================================================================= */
 :root { --depth-perspective: 900px; --depth-max-x: 7deg; --depth-max-y: 6deg; }
 
-:root[data-depth="lite"] [data-tilt],
-:root[data-depth="full"] [data-tilt] {
-  --tilt-x: 0; --tilt-y: 0;
+/* ---- 1. Tilt: any card the engine is touching (or the gyroscope is moving) ----------------------
+   The transform only exists while --tilt-x is set, so cards at rest stay exactly as they were.
+   No !important: the immersive scroll-in animation briefly wins while a card is arriving.        */
+:root:is([data-depth="lite"], [data-depth="full"]) :is(.metric-card, .plan-card, .macro-pill, .app-card, .bf-premium-surface, [data-depth-card])[style*="--tilt-x"] {
   transform:
     perspective(var(--depth-perspective))
-    rotateX(calc(var(--tilt-y) * -1 * var(--depth-max-y)))
-    rotateY(calc(var(--tilt-x) * var(--depth-max-x)))
+    rotateX(calc(var(--tilt-y, 0) * -1 * var(--depth-max-y)))
+    rotateY(calc(var(--tilt-x, 0) * var(--depth-max-x)))
     translateZ(0);
   transition: transform 420ms cubic-bezier(.22, 1.2, .36, 1);
   will-change: transform;
-  -webkit-tap-highlight-color: transparent;
 }
 /* while a finger or mouse is on it, follow quickly instead of springing */
-:root[data-depth] [data-tilt][data-tilt-active] { transition-duration: 90ms; transition-timing-function: linear; }
+:root:is([data-depth="lite"], [data-depth="full"]) :is(.metric-card, .plan-card, .macro-pill, .app-card, .bf-premium-surface, [data-depth-card])[style*="--tilt-x"][data-tilt-active] {
+  transition-duration: 90ms;
+  transition-timing-function: linear;
+}
+/* cards without their own transition still spring back smoothly when let go */
+:root:not([data-depth="off"]) :is(.macro-pill, [data-depth-card]) { transition: transform 420ms cubic-bezier(.22, 1.2, .36, 1); }
+:root:not([data-depth="off"]) :is(.metric-card, .plan-card, .macro-pill, .app-card, [data-depth-card]) { -webkit-tap-highlight-color: transparent; }
 
-/* soft specular highlight that follows the tilt (a big pre-drawn gradient, only translated) */
-:root[data-depth="full"] [data-tilt]::after {
+/* soft light that slides across the metric cards as they tilt (pre-drawn, only translated) */
+:root[data-depth="full"] .metric-card::after {
   content: "";
   position: absolute;
   inset: -60%;
   pointer-events: none;
   z-index: 2;
-  border-radius: inherit;
   background: radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.10), rgb(255 255 255 / 0) 38%);
-  transform: translate3d(calc(var(--tilt-x) * 22%), calc(var(--tilt-y) * 22%), 0);
-  opacity: calc(0.35 + (var(--tilt-x) * var(--tilt-x) + var(--tilt-y) * var(--tilt-y)) * 0.65);
+  transform: translate3d(calc(var(--tilt-x, 0) * 22%), calc(var(--tilt-y, 0) * 22%), 0);
+  opacity: calc(0.25 + (var(--tilt-x, 0) * var(--tilt-x, 0) + var(--tilt-y, 0) * var(--tilt-y, 0)) * 0.75);
   transition: transform 420ms cubic-bezier(.22, 1.2, .36, 1), opacity 420ms ease;
 }
-:root[data-depth="full"][data-theme="light"] [data-tilt]::after {
+:root[data-depth="full"][data-theme="light"] .metric-card::after {
   background: radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.45), rgb(255 255 255 / 0) 38%);
 }
-:root[data-depth] [data-tilt][data-tilt-active]::after { transition-duration: 90ms; }
 
-/* the existing hover-lift would fight the tilt transform */
-:root[data-depth="lite"] .metric-card[data-tilt]:hover,
-:root[data-depth="full"] .metric-card[data-tilt]:hover,
-:root[data-depth="lite"] .metric-card[data-tilt]:active,
-:root[data-depth="full"] .metric-card[data-tilt]:active {
-  transform:
-    perspective(var(--depth-perspective))
-    rotateX(calc(var(--tilt-y) * -1 * var(--depth-max-y)))
-    rotateY(calc(var(--tilt-x) * var(--depth-max-x)))
-    translateZ(0);
+/* ---- 2. Immersive: screens arrive in depth --------------------------------------------------- */
+@keyframes bf-depth-enter {
+  from { opacity: 0; transform: perspective(1200px) translate3d(0, 36px, -90px) rotateX(9deg); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes bf-depth-sheet {
+  from { opacity: 0; transform: perspective(1200px) translate3d(0, 60px, -40px) rotateX(16deg); }
+  to   { opacity: 1; transform: none; }
+}
+:root[data-depth-mode="immersive"]:not([data-depth="off"]) .main-content > * { animation: bf-depth-enter .7s cubic-bezier(.2, .8, .2, 1) both; }
+:root[data-depth-mode="immersive"]:not([data-depth="off"]) .bf-sheet { animation: bf-depth-sheet .45s cubic-bezier(.2, .8, .2, 1) both; transform-origin: 50% 100%; }
+
+/* ---- 3. Immersive: scroll-driven cinematics (the "3D scroll" look) ---------------------------
+   Cards rise out of the depth as they scroll into view, headings sink away as they leave, and the
+   time-of-day scenery drifts slower than the page. Runs on the compositor via CSS scroll timelines
+   (Android WebView / Chrome 115+); older engines simply skip this block.                          */
+@supports (animation-timeline: view()) {
+  @keyframes bf-depth-rise {
+    from { opacity: 0; transform: perspective(1000px) translate3d(0, 56px, -140px) rotateX(16deg); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes bf-depth-recede {
+    from { opacity: 1; transform: none; }
+    to   { opacity: 0; transform: perspective(900px) translate3d(0, -12px, -160px) rotateX(-14deg); }
+  }
+  @keyframes bf-scene-drift {
+    from { transform: translate3d(0, 0, 0) scale(1.12); }
+    to   { transform: translate3d(0, -7vh, 0) scale(1.12); }
+  }
+
+  :root[data-depth-mode="immersive"]:not([data-depth="off"]) .main-content :is(.metric-card, .plan-card, .macro-pill, .app-card, [data-depth-card]) {
+    animation: bf-depth-rise linear backwards;
+    animation-timeline: view();
+    animation-range: entry 0% cover 35%;
+    transform-origin: 50% 0%;
+  }
+  :root[data-depth-mode="immersive"]:not([data-depth="off"]) .main-content :is(h1, .section-header) {
+    animation: bf-depth-recede linear both;
+    animation-timeline: view();
+    animation-range: exit 0% exit 100%;
+    transform-origin: 50% 100%;
+  }
+
+  /* the page scroller publishes its timeline so the fixed scenery canvas can follow it */
+  :root[data-depth-mode="immersive"] { timeline-scope: --bf-page; }
+  :root[data-depth-mode="immersive"] .main-content { scroll-timeline: --bf-page y; }
+  :root[data-depth-mode="immersive"]:not([data-depth="off"]) .bf-scene {
+    animation: bf-scene-in 1.4s ease both, bf-scene-drift linear both;
+    animation-timeline: auto, --bf-page;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  [data-tilt] { transform: none !important; transition: none !important; }
-  [data-tilt]::after { display: none !important; }
+  [style*="--tilt-x"] { transform: none !important; }
+  .metric-card::after { display: none !important; }
 }

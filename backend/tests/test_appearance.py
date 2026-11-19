@@ -51,4 +51,21 @@ check("old policy gains blur defaults instead of missing keys", old["defaults"][
 check("old policy keeps its restrictions (new styles stay off until the admin enables them)", old["styles"] == ["original", "glass"])
 check("reset counter preserved", old["resetCounter"] == 2)
 
+print("== depth (3D) ==")
+TABLE.put_item({**M.APPEARANCE_KEY, "type": "SETTINGS", "updatedAt": "x", "roles": {}})
+pol = M.get_my_appearance_policy(client)["policy"]
+check("all depths offered, Subtle by default", pol["depths"] == ["off", "subtle", "immersive"] and pol["defaults"]["depth"] == "subtle")
+roles = copy.deepcopy(M.admin_get_appearance_policy(admin)["roles"])
+roles["CLIENT"]["depths"] = ["subtle", "immersive"]; roles["CLIENT"]["defaults"]["depth"] = "immersive"
+saved = M.admin_save_appearance_policy(M.AppearancePolicyPayload(roles=roles), admin)
+check("admin can make Immersive the client default and hide Flat", saved["roles"]["CLIENT"]["depths"] == ["subtle", "immersive"] and saved["roles"]["CLIENT"]["defaults"]["depth"] == "immersive")
+check("client reads the depth policy", M.get_my_appearance_policy(client)["policy"]["defaults"]["depth"] == "immersive")
+bad_roles = copy.deepcopy(roles); bad_roles["CLIENT"]["depths"] = ["subtle", "hyper"]
+check("unknown depth rejected", status_of(M.admin_save_appearance_policy, M.AppearancePolicyPayload(roles=bad_roles), admin) == 400)
+bad_roles = copy.deepcopy(roles); bad_roles["CLIENT"]["depths"] = ["off"]
+check("default depth must stay allowed", status_of(M.admin_save_appearance_policy, M.AppearancePolicyPayload(roles=bad_roles), admin) == 400)
+legacy = copy.deepcopy(roles); legacy["CLIENT"].pop("depths"); legacy["CLIENT"]["defaults"].pop("depth")
+kept = M.admin_save_appearance_policy(M.AppearancePolicyPayload(roles=legacy), admin)["roles"]["CLIENT"]
+check("an older admin screen (no depth fields) keeps the saved depth list", kept["depths"] == ["subtle", "immersive"] and kept["defaults"]["depth"] == "subtle")
+
 print(f"\n{ok} passed, {bad} failed"); raise SystemExit(1 if bad else 0)
