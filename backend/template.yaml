@@ -1,0 +1,193 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: The Blue Fit - FastAPI Backend
+
+Parameters:
+  AllowedOrigins:
+    Type: CommaDelimitedList
+    Description: >-
+      Websites / apps allowed to call this API from a browser. Add your production web
+      domain here and, for phone testing on your Wi-Fi, your dev server address.
+    Default: "http://localhost:3000,http://localhost,https://localhost,capacitor://localhost,https://bluefit-1g5.pages.dev"
+
+  ExistingTableName:
+    Type: String
+    Default: ""
+    Description: >-
+      Leave empty on a normal first deploy (the stack creates BlueFit-Table).
+      If BlueFit-Table already exists in this account/region (for example the old stack was deleted and the
+      table was kept), put its name here and the stack will use that table instead of trying to create it.
+  FcmServiceAccountSecretArn:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional. ARN of a Secrets Manager secret holding the Firebase service-account JSON
+      (Firebase console > Project settings > Service accounts > Generate new private key).
+      Leave empty to deploy without push notifications.
+
+Conditions:
+  CreateTable: !Equals [!Ref ExistingTableName, ""]
+  HasFcm: !Not [!Equals [!Ref FcmServiceAccountSecretArn, ""]]
+
+Globals:
+  Function:
+    Timeout: 15
+    MemorySize: 512
+    Runtime: python3.12
+    Architectures:
+      - arm64
+
+Resources:
+  AuthSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Signing key for The Blue Fit session tokens (auto-generated)
+      GenerateSecretString:
+        PasswordLength: 64
+        ExcludePunctuation: true
+
+  BlueFitDatabase:
+    Type: AWS::DynamoDB::Table
+    Condition: CreateTable
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: BlueFit-Table
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+
+  ClientMediaBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      VersioningConfiguration:
+        Status: Enabled
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: !Ref AllowedOrigins
+            AllowedMethods:
+              - POST
+              - GET
+              - HEAD
+            AllowedHeaders:
+              - '*'
+            ExposedHeaders:
+              - ETag
+            MaxAge: 300
+
+  BlueFitHttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefaultRouteSettings:
+        # Chat polling + the 45-second presence heartbeat from every open app share this limit.
+        ThrottlingBurstLimit: 200
+        ThrottlingRateLimit: 100
+      CorsConfiguration:
+        AllowOrigins: !Ref AllowedOrigins
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+          - Accept
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        MaxAge: 600
+
+  CoreApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/core_api/
+      Handler: main.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !If [CreateTable, !Ref BlueFitDatabase, !Ref ExistingTableName]
+          AUTH_SECRET_ARN: !Ref AuthSecret
+          CLIENT_MEDIA_BUCKET: !Ref ClientMediaBucket
+          ALLOWED_ORIGINS: !Join [",", !Ref AllowedOrigins]
+          FCM_SERVICE_ACCOUNT_SECRET_ARN: !Ref FcmServiceAccountSecretArn
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:GetItem
+                - dynamodb:PutItem
+                - dynamodb:UpdateItem
+                - dynamodb:DeleteItem
+                - dynamodb:Query
+                - dynamodb:Scan
+                - dynamodb:BatchGetItem
+                - dynamodb:BatchWriteItem
+                - dynamodb:DescribeTable
+                - dynamodb:ConditionCheckItem
+              Resource:
+                - !Sub
+                  - "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Table}"
+                  - Table: !If [CreateTable, !Ref BlueFitDatabase, !Ref ExistingTableName]
+                - !Sub
+                  - "arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/${Table}/index/*"
+                  - Table: !If [CreateTable, !Ref BlueFitDatabase, !Ref ExistingTableName]
+        - AWSSecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref AuthSecret
+        - !If
+          - HasFcm
+          - Statement:
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref FcmServiceAccountSecretArn
+          - !Ref AWS::NoValue
+        - Statement:
+            - Effect: Allow
+              Action:
+                - s3:GetObject
+                - s3:PutObject
+                - s3:DeleteObject   # storage cleanup removes the original after a verified WebP copy exists
+              Resource:
+                - !Sub "${ClientMediaBucket.Arn}/clients/*"
+                - !Sub "${ClientMediaBucket.Arn}/coaches/*"
+      Events:
+        FastApiCatchAll:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BlueFitHttpApi
+            Path: /{proxy+}
+            Method: ANY
+
+Outputs:
+  ApiUrl:
+    Description: >-
+      Base URL for the unified FastAPI backend.
+      Put this in NEXT_PUBLIC_API_URL without a trailing slash.
+    Value: !Sub
+      - "https://${ApiId}.execute-api.${AWS::Region}.amazonaws.com"
+      - ApiId: !Ref BlueFitHttpApi
+  TableName:
+    Description: DynamoDB table name
+    Value: !If [CreateTable, !Ref BlueFitDatabase, !Ref ExistingTableName]
+  ClientMediaBucketName:
+    Description: Private S3 bucket for client 3-day-log photos
+    Value: !Ref ClientMediaBucket
+  AuthSecretArn:
+    Description: ARN of the AWS-generated session signing secret
+    Value: !Ref AuthSecret

@@ -1,0 +1,766 @@
+// ---------------------------------------------------------------------------
+// ACTIVE API LAYER
+//  - The API address comes ONLY from NEXT_PUBLIC_API_URL (no address in source code).
+//  - After sign-in, every request carries the session token as "Authorization: Bearer ...".
+//  - The server enforces who may see what; the checks in the UI are for convenience only.
+// ---------------------------------------------------------------------------
+import type { RolePolicy } from '@/lib/look';
+
+const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || '').replace(/\/$/, '');
+
+export interface UserSession {
+  PK: string;
+  userCode: string;
+  role: 'CLIENT' | 'COACH' | 'ADMIN';
+  name: string;
+  email?: string;
+  mustChangePassword?: boolean;
+  onboardingCompleted?: boolean;
+  token?: string;
+}
+
+export type Presence = 'ONLINE' | 'TODAY' | 'RECENT' | 'INACTIVE' | 'NEVER';
+
+export type CoachClient = {
+  id: string;
+  name: string;
+  goal: string;
+  adherence: number;
+  lastCheckIn: string;
+  status: 'on-track' | 'needs-attention';
+  presence?: Presence;
+  lastSeenAt?: string | null;
+  stepsToday?: number | null;
+  stepsDate?: string | null;
+  stepGoal?: number;
+  sleepHours?: number | null;
+  hydration?: number | null;
+  unreadMessages?: number;
+  [key: string]: any;
+};
+
+const SESSION_KEY = 'bluefit_user_session';
+
+// ── Persistent session store ────────────────────────────────────────────────
+// On native (iOS/Android via Capacitor), we use @capacitor/preferences which
+// writes to NSUserDefaults / SharedPreferences — this survives app clears,
+// backgrounding, and memory pressure kills. localStorage alone gets wiped by
+// Capacitor's WebView cache-clear on some Android OEMs and every iOS "Offload".
+//
+// On web we fall back to localStorage with sessionStorage as a secondary copy.
+//
+// The API is intentionally synchronous for the `get()` path (reads from the
+// in-memory cache below) and async for the `set()` / `clear()` paths.
+// ────────────────────────────────────────────────────────────────────────────
+let _sessionCache: UserSession | null = null;
+let _nativePrefsReady = false;
+
+// Attempt to hydrate from Capacitor Preferences once on first import
+async function hydrateFromNative(): Promise<void> {
+  try {
+    const { Preferences } = await import('@capacitor/preferences');
+    const { value } = await Preferences.get({ key: SESSION_KEY });
+    if (value) {
+      const parsed: UserSession = JSON.parse(value);
+      _sessionCache = parsed;
+      // Also write to localStorage so synchronous reads work right away
+      localStorage.setItem(SESSION_KEY, value);
+    }
+    _nativePrefsReady = true;
+  } catch {
+    // Not a native environment or plugin not installed — that's fine
+    _nativePrefsReady = true;
+  }
+}
+
+if (typeof window !== 'undefined') {
+  // Pre-populate cache from localStorage immediately (fast synchronous path)
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (raw) _sessionCache = JSON.parse(raw);
+  } catch {}
+  // Then enrich from native storage (async, catches anything localStorage missed)
+  hydrateFromNative().then(() => {
+    window.dispatchEvent(new Event('bluefit:auth-change'));
+  }).catch(() => {});
+}
+
+async function writeToNative(json: string): Promise<void> {
+  try {
+    const { Preferences } = await import('@capacitor/preferences');
+    await Preferences.set({ key: SESSION_KEY, value: json });
+  } catch {}
+}
+
+async function removeFromNative(): Promise<void> {
+  try {
+    const { Preferences } = await import('@capacitor/preferences');
+    await Preferences.remove({ key: SESSION_KEY });
+  } catch {}
+}
+
+export const authSession = {
+  /** Synchronous read — returns cached value immediately. */
+  get: (): UserSession | null => {
+    if (typeof window === 'undefined') return null;
+    // Return in-memory cache first (always up-to-date after set/clear)
+    if (_sessionCache) return _sessionCache;
+    // Fallback: parse localStorage (covers first render before hydrateFromNative resolves)
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      if (raw) { _sessionCache = JSON.parse(raw); return _sessionCache; }
+    } catch {}
+    return null;
+  },
+
+  /** Write session to all stores: memory + localStorage + Capacitor Preferences */
+  set: (session: UserSession) => {
+    if (typeof window === 'undefined') return;
+    const json = JSON.stringify(session);
+    _sessionCache = session;
+    localStorage.setItem(SESSION_KEY, json);
+    try { sessionStorage.setItem(SESSION_KEY, json); } catch {}
+    writeToNative(json); // fire-and-forget: persists to NSUserDefaults/SharedPreferences
+    window.dispatchEvent(new Event('bluefit:auth-change'));
+  },
+
+  /** Clear session from all stores */
+  clear: () => {
+    if (typeof window === 'undefined') return;
+    _sessionCache = null;
+    localStorage.removeItem(SESSION_KEY);
+    try { sessionStorage.removeItem(SESSION_KEY); } catch {}
+    removeFromNative(); // fire-and-forget
+    window.dispatchEvent(new Event('bluefit:auth-change'));
+  },
+};
+
+export function getLocalDateISO(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+}
+
+// The signed-in user's own ID. Pages never choose whose data to load.
+function sessionId(): string {
+  const id = authSession.get()?.PK;
+  if (!id) throw new Error('Please sign in to continue.');
+  return id;
+}
+
+// ── Session token helpers ───────────────────────────────────────────────────
+function tokenClaims(token?: string): { exp?: number; iat?: number } {
+  try {
+    const part = (token || '').split('.')[1];
+    if (!part) return {};
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='));
+    return JSON.parse(json);
+  } catch {
+    return {};
+  }
+}
+
+/** True when the stored token is past its expiry (the server would reject it anyway). */
+export function sessionExpired(session: UserSession | null): boolean {
+  if (!session?.token) return true;
+  const { exp } = tokenClaims(session.token);
+  return !!exp && exp * 1000 < Date.now();
+}
+
+const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000; // matches the server (renew once a day)
+let refreshing: Promise<void> | null = null;
+
+/** Quietly swaps the token for a fresh 30-day one, so people stay signed in while they keep using the app. */
+async function refreshSessionIfNeeded(): Promise<void> {
+  const session = authSession.get();
+  if (!session?.token || !API_BASE_URL) return;
+  const { iat, exp } = tokenClaims(session.token);
+  const now = Date.now();
+  if (exp && exp * 1000 < now) return; // already dead: the next request will sign the user out
+  if (!iat || now - iat * 1000 < REFRESH_AFTER_MS) return;
+  if (!refreshing) {
+    refreshing = (async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.token}` },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          const latest = authSession.get();
+          if (data?.token && latest) authSession.set({ ...latest, token: data.token });
+        }
+      } catch {
+        /* offline: try again on the next request */
+      } finally {
+        refreshing = null;
+      }
+    })();
+  }
+  await refreshing;
+}
+
+async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
+  if (!API_BASE_URL) {
+    throw new Error('The API address is not configured (set NEXT_PUBLIC_API_URL).');
+  }
+  if (!path.startsWith('/auth/')) await refreshSessionIfNeeded();
+  const token = authSession.get()?.token;
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(options.headers || {}),
+      },
+    });
+  } catch {
+    // Offline / server unreachable: never sign the user out for this
+    throw new NetworkError();
+  }
+
+  if (res.status === 401 && token && !path.startsWith('/auth/')) {
+    authSession.clear(); // expired / revoked session: the layout sends the user back to sign-in
+    throw new Error('Your session has expired. Please sign in again.');
+  }
+
+  if (!res.ok) {
+    let errorDetail = `Request failed (${res.status})`;
+    try {
+      const errJson = await res.json();
+      if (typeof errJson.detail === 'string') errorDetail = errJson.detail;
+      else if (Array.isArray(errJson.detail)) errorDetail = 'Please check the information you entered.';
+      else if (typeof errJson.message === 'string') errorDetail = errJson.message;
+    } catch {}
+    throw new Error(errorDetail);
+  }
+  return res.json();
+}
+
+export class NetworkError extends Error {
+  constructor() {
+    super('Cannot reach the server. Check your connection and try again.');
+    this.name = 'NetworkError';
+  }
+}
+
+export interface ThreeDayPhoto {
+  id: string;
+  day: number;
+  meal: string;
+  originalFileName: string;
+  contentType: string;
+  /** S3 object key — use this with getMediaViewUrl() to display the image in-app. */
+  objectKey?: string;
+  /** Short-lived presigned URL kept for backward compatibility only. Do NOT use as an href. */
+  viewUrl?: string;
+  uploadedAt: string;
+}
+
+export interface ThreeDayDayStatus {
+  day: number;
+  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE';
+  meals: Record<string, string>;
+  photos: ThreeDayPhoto[];
+}
+
+export interface ThreeDayCheckStatus {
+  onboardingCompleted: boolean;
+  overallStatus: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE';
+  days: ThreeDayDayStatus[];
+}
+
+export interface ThreeDayPhotoUpload {
+  uploadUrl: string;
+  fields: Record<string, string>;
+  objectKey: string;
+  expiresIn: number;
+}
+
+export interface ThreeDayLogResponse {
+  message: string;
+  day: number;
+  status: 'NOT_STARTED' | 'IN_PROGRESS' | 'COMPLETE';
+}
+
+export interface ProgressPhoto {
+  angle: 'front' | 'side' | 'back' | string;
+  objectKey: string;
+  uploadedAt?: string;
+}
+
+export interface ProgressCheckin {
+  id: string;
+  date: string;
+  weight?: number | null;
+  waist?: number | null;
+  adherence?: string | null;
+  adherenceScore?: number | null;
+  workoutQuality?: string | null;
+  notes: string;
+  photos: ProgressPhoto[];
+}
+
+export interface HealthDay {
+  date: string;
+  steps?: number | null;
+  sleepHours?: number | null;
+  hydration?: number | null;
+  calories?: number | null;
+  heartRate?: number | null;
+  stepsPct?: number | null;
+  [key: string]: any;
+}
+
+export interface ClientProgress {
+  client: { id: string; name: string; goal: string };
+  checkins: ProgressCheckin[];
+  summary: { weightChange: number | null; averageAdherence: number | null; totalCheckins: number };
+  profile?: {
+    email?: string; age?: number | null; height?: number | null; startWeight?: number | null;
+    activityLevel?: string | null; primaryGoal?: string | null; medicalNotes?: string | null;
+    memberSince?: string | null; onboardingCompleted?: boolean; presence?: Presence; lastSeenAt?: string | null;
+    [key: string]: any;
+  };
+  health?: HealthDay[];
+  activity?: {
+    stepsLatest: number | null; stepsAvg7d: number | null; stepGoal: number;
+    sleepAvg7d: number | null; hydrationAvg7d: number | null; caloriesAvg7d: number | null;
+    heartRateAvg7d: number | null; daysWithData: number;
+    workoutsDone7d: number; workoutsPlanned7d: number; workoutsCompletion7d: number | null;
+    lastSyncAt: string | null; source: string | null;
+    [key: string]: any;
+  };
+}
+
+export interface ChatMessage {
+  id: string;
+  clientMsgId?: string | null;
+  sender: 'CLIENT' | 'COACH';
+  senderName: string;
+  text: string;
+  createdAt: string;
+  mine: boolean;
+  pending?: boolean;
+  failed?: boolean;
+}
+
+export interface ChatPeer {
+  id: string;
+  name: string;
+  role: 'CLIENT' | 'COACH';
+  presence: Presence;
+  lastSeenAt?: string | null;
+  [key: string]: any;
+}
+
+export interface ChatThread {
+  clientId: string;
+  peer: ChatPeer | null;
+  unread: number;
+  lastMessageAt: string | null;
+  lastMessageText: string;
+  lastSender: 'CLIENT' | 'COACH' | null;
+}
+
+export interface ChatPage {
+  messages: ChatMessage[];
+  peer: ChatPeer | null;
+  peerLastReadAt: string | null;
+  hasMore: boolean;
+  canSend: boolean;
+  serverTime: string;
+}
+
+export interface ImportResult {
+  created: any[];
+  skipped: { index: number; title: string; reason: string }[];
+}
+
+export interface MonitorUser {
+  id: string;
+  pk: string;
+  name: string;
+  email: string;
+  role: 'CLIENT' | 'COACH';
+  accountStatus: 'ACTIVE' | 'LOCKED' | 'DISABLED';
+  presence: Presence;
+  lastSeenAt: string | null;
+  lastLoginAt: string | null;
+  loginCount: number;
+  createdAt?: string | null;
+  pendingFirstLogin: boolean;
+  lastCheckInAt: string | null;
+  lastWorkoutDate: string | null;
+  signedOut?: boolean;
+  lastLogoutAt?: string | null;
+  stepsToday?: number | null;
+  messagesSent?: number;
+  // clients
+  coachId?: string | null;
+  coachName?: string | null;
+  workoutsThisWeek?: number;
+  checkinsTotal?: number;
+  plansAssigned?: number;
+  threeDayEntries?: number;
+  onboardingCompleted?: boolean;
+  // coaches
+  clientCount?: number;
+  clientsOnlineNow?: number;
+  clientsNeedingAttention?: number;
+  templates?: number;
+  specialization?: string;
+}
+
+export interface AdminMonitor {
+  generatedAt: string;
+  summary: {
+    totalClients: number; totalCoaches: number; onlineNow: number; activeToday: number;
+    neverSignedIn: number; inactive7d: number; unassignedClients: number;
+    lockedAccounts: number; disabledAccounts: number;
+  };
+  clients: MonitorUser[];
+  coaches: MonitorUser[];
+  recentEvents: { type: 'login' | 'checkin' | 'workout'; userId: string; name: string; role: string; at: string }[];
+}
+
+export interface AppearancePolicyAll { roles: { CLIENT: RolePolicy; COACH: RolePolicy }; updatedAt?: string | null; updatedBy?: string | null }
+export interface CleanupPreview {
+  days: number; cutoff: string; parkedFailed: number;
+  categories: Record<string, { count: number; bytes: number }>;
+  total: { count: number; bytes: number; estimatedSavedBytes: number };
+}
+export interface CleanupRunResult {
+  runId: string; converted: number; failed: number; nogain: number; bytesBefore: number; bytesAfter: number;
+  handled: number; remaining: number; done: boolean; errors: { file: string; reason: string }[];
+}
+export interface CleanupRunRow {
+  runId: string; startedAt?: string; updatedAt?: string; days?: number; cats?: string; adminCode?: string;
+  converted?: number; failed?: number; nogain?: number; bytesBefore?: number; bytesAfter?: number; remaining?: number;
+}
+
+export const dashboardAPI = {
+  // --- AUTH & FIRST-TIME SETUP ---
+  login: async (role: 'CLIENT' | 'COACH' | 'ADMIN' | undefined, identifier: string, password: string) => {
+    const user = await apiFetch<UserSession>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ identifier, password, ...(role ? { role } : {}) }),
+    });
+    // A temporary-password login has no token yet: keep it in memory only, never in storage
+    if (user.token && !user.mustChangePassword && user.onboardingCompleted !== false) authSession.set(user);
+    return user;
+  },
+
+  /** Tells the server the user signed out (so the monitor stops showing them online), then clears the session. */
+  logout: async () => {
+    const token = authSession.get()?.token;
+    let pushToken: string | null = null;
+    try { pushToken = localStorage.getItem('bluefit_push_token'); localStorage.removeItem('bluefit_push_token'); } catch { /* ignore */ }
+    authSession.clear();
+    if (!token || !API_BASE_URL) return;
+    // Stop message notifications reaching this phone for the person who just signed out
+    if (pushToken) {
+      fetch(`${API_BASE_URL}/devices/unregister`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ token: pushToken }),
+        keepalive: true,
+      }).catch(() => { /* best effort */ });
+    }
+    try {
+      await fetch(`${API_BASE_URL}/auth/logout`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        keepalive: true,
+      });
+    } catch {
+      /* best effort */
+    }
+  },
+
+  /** Heartbeat: marks the user online and returns their unread message count. */
+  ping: () => apiFetch<{ serverTime: string; unreadMessages: number }>('/presence/ping', { method: 'POST' }),
+
+  // --- MESSAGING (client <-> their coach) ---
+  getThreads: () => apiFetch<{ threads: ChatThread[] }>('/messages/threads'),
+  getMessages: (clientId: string, opts: { after?: string; before?: string; limit?: number; markRead?: boolean } = {}) => {
+    const q = new URLSearchParams();
+    if (opts.after) q.set('after', opts.after);
+    if (opts.before) q.set('before', opts.before);
+    if (opts.limit) q.set('limit', String(opts.limit));
+    if (opts.markRead === false) q.set('markRead', 'false');
+    const qs = q.toString();
+    return apiFetch<ChatPage>(`/messages/${encodeURIComponent(clientId)}${qs ? `?${qs}` : ''}`);
+  },
+  sendMessage: (clientId: string, text: string, clientMsgId?: string) =>
+    apiFetch<{ message: ChatMessage }>(`/messages/${encodeURIComponent(clientId)}`, {
+      method: 'POST',
+      body: JSON.stringify({ text, clientMsgId }),
+    }),
+  markMessagesRead: (clientId: string) =>
+    apiFetch<{ message: string }>(`/messages/${encodeURIComponent(clientId)}/read`, { method: 'POST' }),
+
+  completeFirstTimeSetup: async (payload: {
+    userId: string;
+    currentPassword: string;
+    newPassword: string;
+    [key: string]: any;
+  }) => {
+    const res = await apiFetch<{ message: string; user: UserSession }>('/auth/complete-setup', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    authSession.set(res.user);
+    return res.user;
+  },
+
+  // --- ADMIN PROVISIONING & MANAGEMENT (admin session required) ---
+  saveOnboarding: (payload: {
+    name: string;
+    role: 'CLIENT' | 'COACH' | string;
+    email: string;
+    [key: string]: any;
+  }) =>
+    apiFetch<{
+      message: string;
+      userId: string;
+      userCode: string;
+      tempPassword: string;
+      role: 'CLIENT' | 'COACH';
+      name: string;
+    }>('/admin/onboarding', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getAllUsers: () => apiFetch<any[]>('/admin/users'),
+  getAdminData: () => apiFetch<{ stats: any[] }>('/admin/dashboard/stats'),
+  getAdminMonitor: () => apiFetch<AdminMonitor>('/admin/monitor'),
+
+  // --- ADMIN: storage cleanup (old photos -> WebP) ---
+  cleanupPreview: (days: number, categories: string[], retryFailed = false) =>
+    apiFetch<CleanupPreview>(`/admin/cleanup/preview?days=${days}&categories=${encodeURIComponent(categories.join(','))}&retryFailed=${retryFailed}`),
+  cleanupRun: (payload: { days: number; categories: string[]; runId?: string; retryFailed?: boolean }) =>
+    apiFetch<CleanupRunResult>('/admin/cleanup/run', { method: 'POST', body: JSON.stringify(payload) }),
+  cleanupHistory: () => apiFetch<{ runs: CleanupRunRow[] }>('/admin/cleanup/history'),
+
+  // --- APPEARANCE POLICY ---
+  getMyAppearancePolicy: () => apiFetch<{ role: string; policy: RolePolicy | null; updatedAt?: string | null }>('/settings/appearance'),
+  getAppearancePolicy: () => apiFetch<AppearancePolicyAll>('/admin/settings/appearance'),
+  saveAppearancePolicy: (roles: Partial<Record<'CLIENT' | 'COACH', Partial<RolePolicy> & { resetNow?: boolean }>>) =>
+    apiFetch<AppearancePolicyAll>('/admin/settings/appearance', { method: 'PUT', body: JSON.stringify({ roles }) }),
+  updateUser: (userId: string, payload: Record<string, any>) =>
+    apiFetch<{ message: string; user: any }>(`/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  resetUserPassword: (userId: string) =>
+    apiFetch<{ message: string; userId: string; userCode: string; tempPassword: string }>(
+      `/admin/users/${encodeURIComponent(userId)}/reset-password`,
+      { method: 'POST' }
+    ),
+  deleteUser: (userId: string) =>
+    apiFetch<{ message: string }>(`/admin/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    }),
+  assignCoach: (clientId: string, coachId: string) =>
+    apiFetch<{ message: string; updated: any }>(
+      `/admin/users/${encodeURIComponent(clientId)}/assign`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ coachId }),
+      }
+    ),
+
+  // --- COACH (always the signed-in coach's own data) ---
+  getCoachData: (_coachId?: string) =>
+    apiFetch<{
+      stats: any[];
+      recentActivity: any[];
+      summary?: {
+        activeClients: number; onlineNow: number; workoutCompletion: number | null; sleepConsistency: number | null;
+        hydration: number | null; adherence: number | null; stepsPct: number | null; avgSteps: number | null; stepGoal: number;
+      };
+      weekly?: { date: string; stepsPct: number | null; workoutPct: number | null }[];
+      clients?: CoachClient[];
+    }>(
+      `/coach/${encodeURIComponent(sessionId())}/dashboard`
+    ),
+  getCoachClients: (_coachId?: string) =>
+    apiFetch<{ clients: CoachClient[] }>(
+      `/coach/${encodeURIComponent(sessionId())}/clients`
+    ),
+  getCoachTemplates: (_coachId?: string) =>
+    apiFetch<{ templates: any[] }>(
+      `/coach/${encodeURIComponent(sessionId())}/templates`
+    ),
+  createTemplate: (payload: any, _coachId?: string) =>
+    apiFetch<any>(`/coach/${encodeURIComponent(sessionId())}/templates`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  getTemplate: (templateId: string) =>
+    apiFetch<any>(`/coach/templates/${encodeURIComponent(templateId)}`),
+  importTemplates: (templates: any[]) =>
+    apiFetch<ImportResult>(`/coach/${encodeURIComponent(sessionId())}/templates/import`, {
+      method: 'POST',
+      body: JSON.stringify({ templates }),
+    }),
+  updateTemplate: (templateId: string, payload: any) =>
+    apiFetch<any>(`/coach/templates/${encodeURIComponent(templateId)}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+
+  // --- ATHLETE (CLIENT) ---
+  getAthleteData: (_athleteId?: string, date?: string) =>
+    apiFetch<{ date: string; todayTraining: any[]; [key: string]: any }>(
+      `/athlete/${encodeURIComponent(sessionId())}/dashboard?date=${encodeURIComponent(date || getLocalDateISO())}`
+    ),
+
+  // 3-Day onboarding / check-status
+  getClientCheckStatus: () =>
+    apiFetch<ThreeDayCheckStatus>(
+      `/athlete/${encodeURIComponent(sessionId())}/check-status`
+    ),
+
+  saveThreeDayLog: (day: number, meals: Record<string, string>) =>
+    apiFetch<ThreeDayLogResponse>(
+      `/athlete/check-status/3-day-log/${day}`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ meals }),
+      }
+    ),
+
+  createThreeDayPhotoUpload: (payload: {
+    day: number;
+    meal: string;
+    fileName: string;
+    contentType: string;
+  }) =>
+    apiFetch<ThreeDayPhotoUpload>(
+      '/athlete/check-status/photos/upload-url',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  completeThreeDayPhoto: (payload: {
+    day: number;
+    meal: string;
+    objectKey: string;
+    originalFileName?: string;
+  }) =>
+    apiFetch<{ message: string; photo: ThreeDayPhoto }>(
+      '/athlete/check-status/photos/complete',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  // --- COACH: signed-in coach may view only assigned clients ---
+  getCoachClientCheckStatus: (clientId: string) =>
+    apiFetch<ThreeDayCheckStatus>(
+      `/coach/${encodeURIComponent(sessionId())}/clients/${encodeURIComponent(clientId)}/check-status`
+    ),
+
+  saveCheckin: (payload: {
+    weight: number;
+    adherence: string;
+    workoutQuality: string;
+    waist?: number;
+    notes?: string;
+  }) =>
+    apiFetch<{ message: string; checkinId: string }>('/athlete/checkin', {
+      method: 'POST',
+      body: JSON.stringify(payload), // the server uses the signed-in athlete, not an ID from the browser
+    }),
+
+  // Weekly check-in progress photos (front / side / back) attach to the saved check-in
+  createProgressPhotoUpload: (payload: { checkinId: string; angle: string; fileName: string; contentType: string }) =>
+    apiFetch<ThreeDayPhotoUpload>('/athlete/checkin/photos/upload-url', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  completeProgressPhoto: (payload: { checkinId: string; angle: string; objectKey: string; originalFileName?: string }) =>
+    apiFetch<{ message: string; angle: string; objectKey: string }>('/athlete/checkin/photos/complete', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  // Coach "Progress Review": real check-in history for one assigned client
+  getClientProgress: (clientId: string) =>
+    apiFetch<ClientProgress>(
+      `/coach/${encodeURIComponent(sessionId())}/clients/${encodeURIComponent(clientId)}/progress`
+    ),
+
+  // Mark an assigned workout done / not done (defaults to today, in the device's local date)
+  logWorkout: (assignmentId: string, completed: boolean, date?: string) =>
+    apiFetch<{ message: string; date: string; assignmentId: string; completed: boolean }>('/athlete/workouts/log', {
+      method: 'PUT',
+      body: JSON.stringify({ assignmentId, completed, date: date || getLocalDateISO() }),
+    }),
+
+  saveHealthMetrics: (data: {
+    date?: string;
+    source?: string;
+    steps?: number;
+    sleepHours?: number;
+    calories?: number;
+    heartRate?: number;
+    hydration?: number;
+  }) =>
+    apiFetch<{ message: string }>('/athlete/health-metrics', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // --- APPLE HEALTH (iPhone) SYNC KEY ---
+  // Personal key used by the iOS Shortcut. It can only write this athlete's own daily health numbers.
+  getHealthSyncStatus: () =>
+    apiFetch<{ enabled: boolean; createdAt?: string; lastUsedAt?: string }>('/athlete/health-sync/status'),
+  createHealthSyncKey: () =>
+    apiFetch<{ key: string; createdAt: string }>('/athlete/health-sync/key', { method: 'POST' }),
+  revokeHealthSyncKey: () =>
+    apiFetch<{ message: string }>('/athlete/health-sync/key', { method: 'DELETE' }),
+
+  // --- TEMPLATE ASSIGNMENT ---
+  assignTemplateToClient: (templateId: string, clientId: string, startDate?: string, notes?: string) =>
+    apiFetch<{ message: string; assignmentId: string; clientId: string; startDate: string }>(
+      `/coach/${encodeURIComponent(sessionId())}/templates/${encodeURIComponent(templateId)}/assign`,
+      { method: 'POST', body: JSON.stringify({ clientId, startDate, notes }) }
+    ),
+
+  getClientSchedules: (clientId: string) =>
+    apiFetch<{ schedules: any[] }>(
+      `/coach/${encodeURIComponent(sessionId())}/clients/${encodeURIComponent(clientId)}/schedules`
+    ),
+
+  // --- ATHLETE SCHEDULES ---
+  getAthleteSchedules: () =>
+    apiFetch<{ schedules: any[] }>(
+      `/athlete/${encodeURIComponent(sessionId())}/schedules`
+    ),
+
+  getAthleteScheduleDetail: (assignmentId: string) =>
+    apiFetch<any>(
+      `/athlete/${encodeURIComponent(sessionId())}/schedules/${encodeURIComponent(assignmentId)}`
+    ),
+
+  // --- MEDIA VIEWER ---
+  getMediaViewUrl: (objectKey: string) =>
+    apiFetch<{ viewUrl: string; objectKey: string }>(
+      `/media/view?objectKey=${encodeURIComponent(objectKey)}`
+    ),
+
+  getTemplateImageView: (templateId: string) =>
+    apiFetch<{ viewUrl: string; objectKey: string }>(
+      `/coach/templates/${encodeURIComponent(templateId)}/image-view`
+    ),
+};
