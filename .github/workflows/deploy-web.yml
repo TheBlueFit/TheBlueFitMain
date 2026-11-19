@@ -1,0 +1,65 @@
+# Publishes the web app to Cloudflare Pages on every push to main (replaces dragging the out/ folder).
+#
+# One-time setup (GitHub repo > Settings > Secrets and variables > Actions):
+#   Secrets:   CLOUDFLARE_API_TOKEN      Cloudflare > My Profile > API Tokens > Create Token >
+#                                        Custom token, permission "Account > Cloudflare Pages > Edit"
+#              CLOUDFLARE_ACCOUNT_ID     Cloudflare > Workers & Pages (shown on the right as "Account ID")
+#   Variables: CLOUDFLARE_PROJECT_NAME   your Pages project's name exactly as Cloudflare shows it
+#              NEXT_PUBLIC_API_URL / NEXT_PUBLIC_DIET_API_URL   (already set for the APK build)
+
+name: Deploy web (Cloudflare Pages)
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["backend/**", "android/**", "**/*.md"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      NEXT_TELEMETRY_DISABLED: "1"
+      NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+      NEXT_PUBLIC_DIET_API_URL: ${{ vars.NEXT_PUBLIC_DIET_API_URL }}
+      NEXT_PUBLIC_IOS_SHORTCUT_URL: ${{ vars.NEXT_PUBLIC_IOS_SHORTCUT_URL }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      PROJECT: ${{ vars.CLOUDFLARE_PROJECT_NAME }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Check configuration
+        run: |
+          missing=""
+          [ -z "$NEXT_PUBLIC_API_URL" ] && missing="$missing NEXT_PUBLIC_API_URL(variable)"
+          [ -z "$PROJECT" ] && missing="$missing CLOUDFLARE_PROJECT_NAME(variable)"
+          [ -z "$CLOUDFLARE_API_TOKEN" ] && missing="$missing CLOUDFLARE_API_TOKEN(secret)"
+          [ -z "$CLOUDFLARE_ACCOUNT_ID" ] && missing="$missing CLOUDFLARE_ACCOUNT_ID(secret)"
+          if [ -n "$missing" ]; then echo "::error::Missing:$missing"; exit 1; fi
+
+      - run: npm ci --no-audit --no-fund
+      - run: npx tsc --noEmit
+      - name: Build static site (out/)
+        run: npm run build
+
+      - name: Deploy to Cloudflare Pages
+        run: |
+          npx --yes wrangler@4 pages deploy out --project-name="$PROJECT" --branch=main --commit-hash="$GITHUB_SHA" | tee deploy.log
+          url=$(grep -Eo 'https://[a-zA-Z0-9.-]+\.pages\.dev' deploy.log | tail -1)
+          echo "### Deployed to Cloudflare Pages" >> "$GITHUB_STEP_SUMMARY"
+          echo "$url" >> "$GITHUB_STEP_SUMMARY"
