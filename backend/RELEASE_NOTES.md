@@ -2,7 +2,7 @@
 
 ## Your 8 points
 1. **Template import (coach)** – `POST /coach/{id}/templates/import` + new Import dialog (upload .json files or paste JSON, per-template validation, pick which to import, sample download). Single object, list, or `{templates:[…]}` all accepted. Sample: `backend/tools/example_templates.json`.
-2. **Login on every instance** – sessions persist (30-day token, silently refreshed daily via `/auth/refresh`), so you sign in once per device, not once per visit. Sign out calls `/auth/logout` and clears the session. Expired/invalid tokens bounce to the login screen, then back to the page you wanted.
+2. **Login on every instance** – sessions persist (7-day token, silently refreshed daily via `/auth/refresh`, so a device you keep using stays signed in), so you sign in once per device, not once per visit. Sign out calls `/auth/logout` and clears the session. Expired/invalid tokens bounce to the login screen, then back to the page you wanted.
 3. **Messaging** – rebuilt end to end: conversation list with unread badges, optimistic send, retry on failure, "Seen" receipts, day separators, ~4 s polling while the tab is visible. Works the same for coach and client.
 4. **Monitor accuracy** – presence now comes from a real heartbeat (`/presence/ping`) and logout; signed-out users no longer show as online. Counts (online / active today / inactive / never signed in / no coach) are computed server-side from the same data.
 5. **Consistent UI** – one design-token system and one component kit across login, client, coach and admin. Same buttons, cards, inputs, badges, tables, empty states, skeletons. Sidebar on desktop, top bar + bottom tab bar on phones, safe-area aware, 16 px inputs (no iOS zoom).

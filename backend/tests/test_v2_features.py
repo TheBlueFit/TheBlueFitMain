@@ -49,14 +49,14 @@ mk("CLIENT#CL3", "CLIENT", "Cara")                       # no coach
 print("\n== configuration ==")
 check("production web app + localhost are allowed origins by default",
       "https://bluefit-1g5.pages.dev" in M.DEFAULT_ORIGINS.split(',') and "http://localhost:3000" in M.DEFAULT_ORIGINS.split(','))
-check("sessions last 30 days", M.TOKEN_TTL_SECONDS == 30 * 24 * 3600)
+check("sessions last 7 days", M.TOKEN_TTL_SECONDS == 7 * 24 * 3600)
 
 print("\n== sessions: refresh + logout ==")
 r_admin, r_coach, r_c1, r_c2 = (login(c, r) for c, r in (("AD1", "ADMIN"), ("CH1", "COACH"), ("CL1", "CLIENT"), ("CL2", "CLIENT")))
 admin, coach, c1, c2 = (auth(r["token"]) for r in (r_admin, r_coach, r_c1, r_c2))
 import base64, json
 claims = json.loads(base64.urlsafe_b64decode(r_c1["token"].split('.')[1] + "=="))
-check("token expires ~30 days out", 29 * 86400 < claims["exp"] - claims["iat"] <= 30 * 86400)
+check("token expires ~7 days out", 6 * 86400 < claims["exp"] - claims["iat"] <= 7 * 86400)
 count_before = TABLE.d[("CLIENT#CL1", M.PROFILE_SK)]["loginCount"]
 time.sleep(1.1)
 fresh = M.refresh_session(user=c1)

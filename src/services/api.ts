@@ -169,7 +169,7 @@ export function sessionExpired(session: UserSession | null): boolean {
 const REFRESH_AFTER_MS = 24 * 60 * 60 * 1000; // matches the server (renew once a day)
 let refreshing: Promise<void> | null = null;
 
-/** Quietly swaps the token for a fresh 30-day one, so people stay signed in while they keep using the app. */
+/** Quietly swaps the token for a fresh 7-day one, so people stay signed in while they keep using the app. */
 async function refreshSessionIfNeeded(): Promise<void> {
   const session = authSession.get();
   if (!session?.token || !API_BASE_URL) return;

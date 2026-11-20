@@ -1,9 +1,10 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { Moon, Palette, Sun } from "lucide-react";
+import { Palette } from "lucide-react";
 import {
-  APPEARANCE_INIT_SCRIPT, applyLook, clampLook, DEFAULT_LOOK, Look, POLICY_KEY, readLookRaw, RESET_KEY, RolePolicy, saveLook, STYLES, THEME_KEY, LOOK_KEY,
+  APPEARANCE_INIT_SCRIPT, applyLook, clampLook, DEFAULT_LOOK, isThemeId, Look, POLICY_KEY, presetLook, readLookRaw,
+  RESET_KEY, RolePolicy, saveLook, themeOf, ThemeId, THEMES,
 } from "@/lib/look";
 import { authSession, dashboardAPI } from "@/services/api";
 import SceneBackground from "@/components/shell/SceneBackground";
@@ -18,39 +19,40 @@ export const THEME_INIT_SCRIPT = APPEARANCE_INIT_SCRIPT;
 
 interface ThemeCtx {
   theme: Theme;
-  setTheme: (t: Theme) => void;
-  toggle: () => void;
   look: Look;
-  setLook: (patch: Partial<Look>) => void;
+  /** pick one of the five themes */
+  setThemePreset: (id: ThemeId) => void;
   resetLook: () => void;
   openAppearance: () => void;
   /** the admin's limits for this user's role (null = unrestricted: admins, or not signed in) */
   policy: RolePolicy | null;
   canCustomize: boolean;
-  allowedThemes: Theme[];
+  allowedThemes: ThemeId[];
 }
 
 const Ctx = createContext<ThemeCtx>({
-  theme: "dark", setTheme: () => {}, toggle: () => {}, look: DEFAULT_LOOK, setLook: () => {}, resetLook: () => {}, openAppearance: () => {},
-  policy: null, canCustomize: true, allowedThemes: ["dark", "light"],
+  theme: "dark", look: DEFAULT_LOOK, setThemePreset: () => {}, resetLook: () => {}, openAppearance: () => {},
+  policy: null, canCustomize: true, allowedThemes: THEMES.map((t) => t.id),
 });
 export const useTheme = () => useContext(Ctx);
 
 function readStorage(key: string): string | null { try { return localStorage.getItem(key); } catch { return null; } }
-function readStoredTheme(): Theme | null { const v = readStorage(THEME_KEY); return v === "light" || v === "dark" ? v : null; }
 function readCachedPolicy(): RolePolicy | null {
-  try { const c = JSON.parse(readStorage(POLICY_KEY) || "null"); return c && c.policy ? (c.policy as RolePolicy) : null; } catch { return null; }
+  try {
+    const c = JSON.parse(readStorage(POLICY_KEY) || "null");
+    const pol = c && c.policy ? (c.policy as RolePolicy) : null;
+    // a policy saved by an older build has no theme list: ignore it rather than trusting it
+    return pol && Array.isArray(pol.themes) && pol.themes.length ? pol : null;
+  } catch { return null; }
 }
 
 export default function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [rawTheme, setRawTheme] = useState<Theme | null>(null);
   const [raw, setRaw] = useState<{ look: Look; has: boolean }>({ look: DEFAULT_LOOK, has: false });
   const [policy, setPolicy] = useState<RolePolicy | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // first client render: read what the user chose and the last policy we saw for them
+  // first client render: read the saved theme and the last policy we saw for this person
   useEffect(() => {
-    setRawTheme(readStoredTheme());
     setRaw(readLookRaw());
     setPolicy(readCachedPolicy());
   }, []);
@@ -65,10 +67,10 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
       const pol = res.policy;
       try { if (pol) localStorage.setItem(POLICY_KEY, JSON.stringify({ role: res.role, policy: pol })); else localStorage.removeItem(POLICY_KEY); } catch {}
       if (pol) {
-        // "reset everyone" from the admin console: drop this user's personal choices once
+        // "reset everyone" from the admin console: drop this user's personal choice once
         const seen = Number(readStorage(RESET_KEY) || 0);
         if (pol.resetCounter !== seen) {
-          if (seen !== 0 || readStorage(LOOK_KEY)) { try { localStorage.removeItem(LOOK_KEY); localStorage.removeItem(THEME_KEY); } catch {} setRawTheme(null); setRaw(readLookRaw()); }
+          if (seen !== 0 || readStorage("bluefit_look")) { try { localStorage.removeItem("bluefit_look"); } catch {} setRaw(readLookRaw()); }
           try { localStorage.setItem(RESET_KEY, String(pol.resetCounter)); } catch {}
         }
       }
@@ -86,13 +88,9 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
     return () => { window.removeEventListener("bluefit:auth-change", refreshPolicy); document.removeEventListener("visibilitychange", onVisible); window.clearInterval(id); };
   }, [refreshPolicy]);
 
-  // ---- effective look = what the user picked, pulled back inside the admin's limits ----
-  const effective = useMemo(
-    () => clampLook(raw.look, rawTheme ?? "dark", policy, raw.has, rawTheme !== null),
-    [raw, rawTheme, policy],
-  );
-  const theme = effective.theme;
-  const look = effective.look;
+  // ---- effective look = the person's theme, pulled back inside the admin's five ----
+  const look = useMemo(() => clampLook(raw.look, policy, raw.has), [raw, policy]);
+  const theme = themeOf(look);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -103,31 +101,20 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
   }, [theme, look]);
 
   const canCustomize = policy ? policy.allowCustomize : true;
-  const allowedThemes: Theme[] = !policy ? ["dark", "light"] : !policy.allowCustomize ? [theme] : policy.themes;
+  const allowedThemes: ThemeId[] = !policy ? THEMES.map((t) => t.id) : policy.allowCustomize ? policy.themes : [policy.defaultTheme];
 
-  const setTheme = useCallback((next: Theme) => {
-    if (policy && (!policy.allowCustomize || !policy.themes.includes(next))) return;
-    setRawTheme(next);
-    try { localStorage.setItem(THEME_KEY, next); } catch {}
-  }, [policy]);
-
-  const toggle = useCallback(() => setTheme(theme === "light" ? "dark" : "light"), [setTheme, theme]);
-
-  const setLook = useCallback((patch: Partial<Look>) => {
-    if (policy && !policy.allowCustomize) return;
+  const setThemePreset = useCallback((id: ThemeId) => {
+    if (policy && (!policy.allowCustomize || policy.themes.indexOf(id) < 0)) return;
+    if (!isThemeId(id)) return;
     setRaw((prev) => {
-      // choosing a style also switches to the colours it is designed with (they can still be changed afterwards)
-      let suggested = patch.style && patch.palette === undefined ? STYLES.find((x) => x.id === patch.style)?.palette : undefined;
-      if (suggested && policy && !policy.palettes.includes(suggested)) suggested = undefined;
-      const next = { ...prev.look, ...patch, ...(suggested ? { palette: suggested } : {}) };
+      const next: Look = { ...presetLook(id), motion: prev.look.motion };
       saveLook(next);
       return { look: next, has: true };
     });
   }, [policy]);
 
   const resetLook = useCallback(() => {
-    try { localStorage.removeItem(LOOK_KEY); localStorage.removeItem(THEME_KEY); } catch {}
-    setRawTheme(null);
+    try { localStorage.removeItem("bluefit_look"); } catch {}
     setRaw(readLookRaw());
   }, []);
 
@@ -135,7 +122,7 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
   useEffect(() => { if (!canCustomize) setSheetOpen(false); }, [canCustomize]);
 
   return (
-    <Ctx.Provider value={{ theme, setTheme, toggle, look, setLook, resetLook, openAppearance, policy, canCustomize, allowedThemes }}>
+    <Ctx.Provider value={{ theme, look, setThemePreset, resetLook, openAppearance, policy, canCustomize, allowedThemes }}>
       <SceneBackground />
       <DepthRoot />
       {children}
@@ -144,36 +131,30 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
   );
 }
 
-/** Light / dark switch. `compact` renders just the icon (phone top bar, login page). Hidden when the admin allows only one theme. */
+/** Appearance: opens the five-theme sheet. Hidden when the admin switched customisation off. */
 export function ThemeToggle({ compact = false }: { compact?: boolean }) {
-  const { theme, toggle, allowedThemes, canCustomize } = useTheme();
-  if (!canCustomize || allowedThemes.length < 2) return null;
-  const next = theme === "dark" ? "light" : "dark";
+  const { openAppearance, canCustomize } = useTheme();
+  if (!canCustomize) return null;
   return (
     <button
       type="button"
-      onClick={toggle}
+      onClick={openAppearance}
       className={`theme-toggle${compact ? " icon-only" : ""}`}
-      aria-label={`Switch to ${next} theme`}
-      title={`Switch to ${next} theme`}
+      aria-label="Appearance: choose a theme"
+      title="Appearance"
     >
-      {theme === "dark" ? <Moon size={17} /> : <Sun size={17} />}
-      {!compact && (
-        <>
-          <span>{theme === "dark" ? "Dark" : "Light"} theme</span>
-          <span className="track" aria-hidden="true" />
-        </>
-      )}
+      <Palette size={17} />
+      {!compact && <span>Appearance</span>}
     </button>
   );
 }
 
-/** Opens the Appearance sheet (palette, vibrancy, motion). Hidden when the admin switched customisation off. */
+/** Opens the Appearance sheet. Same control as ThemeToggle, kept as a separate name for existing pages. */
 export function AppearanceButton({ compact = false, className = "" }: { compact?: boolean; className?: string }) {
   const { openAppearance, canCustomize } = useTheme();
   if (!canCustomize) return null;
   return (
-    <button type="button" onClick={openAppearance} className={`theme-toggle${compact ? " icon-only" : ""} ${className}`} aria-label="Appearance: colours and animation" title="Appearance">
+    <button type="button" onClick={openAppearance} className={`theme-toggle${compact ? " icon-only" : ""} ${className}`} aria-label="Appearance: choose a theme" title="Appearance">
       <Palette size={17} />
       {!compact && <span>Appearance</span>}
     </button>

@@ -45,7 +45,7 @@ DEFAULT_ORIGINS = ','.join([
 ])
 ALLOWED_ORIGINS = [o.strip() for o in os.environ.get('ALLOWED_ORIGINS', DEFAULT_ORIGINS).split(',') if o.strip()]
 
-TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60   # sessions last 30 days and slide forward while the app is used
+TOKEN_TTL_SECONDS = 7 * 24 * 60 * 60   # a stolen token stops working after a week; active sessions slide forward daily
 TOKEN_REFRESH_AFTER_SECONDS = 24 * 60 * 60   # the app asks for a fresh token once the current one is a day old
 MAX_FAILED_LOGINS = 5                # lock the account after this many wrong passwords...
 LOCK_SECONDS = 15 * 60               # ...for this long
@@ -139,10 +139,18 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec='milliseconds')
 
 
+_ID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{1,40}$')
+
+
 def make_pk(role: str, raw: str) -> str:
-    """'CHR001' -> 'COACH#CHR001'.  A full key ('COACH#CHR001', also URL-encoded) is kept."""
-    raw = unquote(raw).strip()
-    return raw if '#' in raw else f"{role.upper()}#{raw}"
+    """'CHR001' -> 'COACH#CHR001'.  A full key ('COACH#CHR001', also URL-encoded) is accepted, but the
+    entity type always comes from `role`: a caller can never turn an athlete id into a coach/admin key."""
+    raw = unquote(str(raw or '')).strip()
+    if '#' in raw:
+        raw = raw.split('#', 1)[1]
+    if not _ID_PATTERN.match(raw):
+        raise HTTPException(status_code=400, detail="Invalid identifier.")
+    return f"{role.upper()}#{raw}"
 
 
 def short_id(pk: str) -> str:
@@ -273,7 +281,16 @@ def verify_token(token: str) -> dict:
         if not hmac.compare_digest(expected, _unb64(sig_b64)):
             raise ValueError("bad signature")
         claims = json.loads(_unb64(body_b64))
-        if int(claims['exp']) < time.time():
+        if not isinstance(claims, dict):
+            raise ValueError("bad claims")
+        if not isinstance(claims.get('sub'), str) or claims.get('role') not in ROLE_PREFIXES:
+            raise ValueError("bad claims")
+        issued, expires = int(claims['iat']), int(claims['exp'])
+        if issued > time.time() + 300:          # issued in the future: clock tampering or a forged header
+            raise ValueError("bad iat")
+        if expires <= issued:
+            raise ValueError("bad exp")
+        if expires < time.time():
             raise ValueError("expired")
         return claims
     except Exception:
@@ -930,12 +947,52 @@ def baseline_fields(role: str, data: dict) -> dict:
     return out
 
 
+# ------------------------ login throttle (per caller IP) -------------------
+# Account lockout (MAX_FAILED_LOGINS) protects one account. This protects the endpoint itself: one caller
+# cannot spray passwords across many accounts or hammer sign-in. Memory is per Lambda container, so API
+# Gateway's stage throttle stays the outer, account-wide limit.
+_RATE_LIMIT_MAX_KEYS = 5000
+_rate_hits: Dict[str, List[float]] = {}
+
+
+def client_ip(request: Any) -> str:
+    headers = getattr(request, 'headers', None)
+    forwarded = (headers.get('x-forwarded-for', '') if headers is not None else '') or ''
+    if forwarded:
+        return forwarded.split(',')[0].strip()[:64]
+    scope_client = (getattr(request, 'scope', None) or {}).get('client')
+    return (scope_client[0] if scope_client else '') or 'unknown'
+
+
+def rate_limit(request: Request, bucket: str, limit: int, window: int) -> None:
+    now = time.time()
+    key = f"{bucket}:{client_ip(request)}"
+    hits = [t for t in _rate_hits.get(key, []) if now - t < window]
+    if len(hits) >= limit:
+        raise HTTPException(status_code=429, detail='Too many attempts. Please wait a few minutes and try again.')
+    hits.append(now)
+    _rate_hits[key] = hits
+    if len(_rate_hits) > _RATE_LIMIT_MAX_KEYS:      # keep the dict from growing without bound
+        for stale in [k for k, v in _rate_hits.items() if not v or now - v[-1] > 3600]:
+            _rate_hits.pop(stale, None)
+
+
+def login_throttle(request: Request) -> None:
+    rate_limit(request, 'login', 20, 300)
+
+
 # ----------------------------- app-level handlers --------------------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
     response = await call_next(request)
     response.headers["Cache-Control"] = "no-store"
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    # JSON API only: never render as a document or allow this response to be framed.
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
     return response
 
 
@@ -953,7 +1010,7 @@ def health():
 
 
 @app.post("/auth/login")
-def login(payload: LoginPayload):
+def login(payload: LoginPayload, _throttle: None = Depends(login_throttle)):
     generic = HTTPException(status_code=401, detail="Invalid ID or password.")
     profile = find_login_profile(payload.identifier, payload.role)
 
@@ -982,9 +1039,14 @@ def login(payload: LoginPayload):
 
 
 @app.post("/auth/complete-setup")
-def complete_setup(payload: CompleteSetupPayload):
+def complete_setup(payload: CompleteSetupPayload, _throttle: None = Depends(login_throttle)):
     """First login: replace the admin-issued temporary password and save baseline details."""
-    pk = make_pk('CLIENT', payload.userId) if '#' not in payload.userId else unquote(payload.userId).strip()
+    # Coaches complete setup the same way; the entity type must be a provisionable one (never ADMIN).
+    raw_id = unquote(str(payload.userId or '')).strip()
+    role_prefix = raw_id.split('#', 1)[0] if '#' in raw_id else 'CLIENT'
+    if role_prefix not in PROVISIONABLE_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid identifier.")
+    pk = make_pk(role_prefix, raw_id)
     profile = get_profile(pk)
     generic = HTTPException(status_code=401, detail="Invalid ID or password.")
 
@@ -1030,7 +1092,7 @@ def complete_setup(payload: CompleteSetupPayload):
 
 @app.post("/auth/refresh")
 def refresh_session(user: dict = Depends(current_user)):
-    """Swap a still-valid token for a fresh 30-day one. The app calls this in the background so people
+    """Swap a still-valid token for a fresh 7-day one. The app calls this in the background so people
     who use it regularly are never asked to sign in again. Does not count as a new login."""
     profile = get_profile(user['pk'])
     if not profile or profile.get('mustChangePassword'):
@@ -1442,11 +1504,13 @@ def get_system_status(user: dict = Depends(require_roles('ADMIN'))):
 
 @app.delete("/admin/users/{userId}")
 def delete_user(userId: str, user: dict = Depends(require_roles('ADMIN'))):
-    pk = unquote(userId)
+    pk = unquote(userId).strip()
     if '#' not in pk:
         raise HTTPException(status_code=400, detail="userId must be a full key such as CLIENT#CLS001")
-    if pk.startswith('ADMIN#'):
+    if pk.split('#', 1)[0] == 'ADMIN':
         raise HTTPException(status_code=403, detail="Admin accounts cannot be deleted from here.")
+    if pk.split('#', 1)[0] not in PROVISIONABLE_ROLES or not _ID_PATTERN.match(pk.split('#', 1)[1]):
+        raise HTTPException(status_code=400, detail="Invalid userId.")
     try:
         table.delete_item(
             Key={'PK': pk, 'SK': PROFILE_SK},
@@ -1476,7 +1540,7 @@ class AdminUserUpdatePayload(BaseModel):
 def update_user(userId: str, payload: AdminUserUpdatePayload, user: dict = Depends(require_roles('ADMIN'))):
     """Admin-only user edit. Role and userCode remain immutable here."""
     pk = unquote(userId).strip()
-    if '#' not in pk:
+    if '#' not in pk or pk.split('#', 1)[0] not in PROVISIONABLE_ROLES or not _ID_PATTERN.match(pk.split('#', 1)[1]):
         raise HTTPException(status_code=400, detail="userId must be a full key such as CLIENT#CLS001")
     profile = get_profile(pk)
     if not profile:
@@ -1534,7 +1598,7 @@ def update_user(userId: str, payload: AdminUserUpdatePayload, user: dict = Depen
 def reset_user_password(userId: str, user: dict = Depends(require_roles('ADMIN'))):
     """Generate a new temporary password, require change on next login, and revoke old sessions."""
     pk = unquote(userId).strip()
-    if '#' not in pk:
+    if '#' not in pk or pk.split('#', 1)[0] not in PROVISIONABLE_ROLES or not _ID_PATTERN.match(pk.split('#', 1)[1]):
         raise HTTPException(status_code=400, detail="userId must be a full key such as CLIENT#CLS001")
     profile = get_profile(pk)
     if not profile:
@@ -2811,6 +2875,7 @@ def revoke_health_sync_key(user: dict = Depends(require_roles('CLIENT'))):
 async def health_sync_ingest(request: Request, authorization: Optional[str] = Header(default=None)):
     """Called by the iPhone Shortcut. Auth is the athlete's sync key (Authorization: Bearer bfh.<id>.<secret>).
     Body (all optional, numbers may be text): steps, sleepHours | sleepMinutes, calories, heartRate, hydration, date."""
+    rate_limit(request, 'sync', 120, 60)
     denied = HTTPException(status_code=401, detail="Invalid sync key. Open the app and create a new one.")
     if not authorization or not authorization.lower().startswith('bearer '):
         raise denied
@@ -3365,95 +3430,85 @@ def cleanup_history(user: dict = Depends(require_roles('ADMIN'))):
 
 
 # ---------------------------------------------------------------------------
-# APPEARANCE POLICY (admin decides what clients and coaches may customise)
-# Stored as one item. The app reads its own role's slice and clamps the user's saved look to it.
-# Keep these id lists in step with src/lib/look.ts (STYLES / PALETTES / SCENES / BLURS / DEPTHS).
+# APPEARANCE POLICY (admin decides which of the five themes clients and coaches may use)
+# Stored as one item. The app reads its own role's slice and clamps the person's saved theme to it.
+# Keep APPEARANCE_THEME_IDS in step with THEMES in src/lib/look.ts.
 # ---------------------------------------------------------------------------
 
-APPEARANCE_STYLE_IDS = ('original', 'glass', 'vintage', 'oldgym', 'moderngym', 'navy', 'forest', 'coral')
-APPEARANCE_PALETTE_IDS = ('classic', 'ocean', 'violet', 'rose', 'ember', 'mint', 'graphite', 'sepia', 'volt', 'azure', 'emerald', 'coral')
-APPEARANCE_SCENE_IDS = ('auto', 'night', 'morning', 'afternoon', 'evening', 'off')
-APPEARANCE_THEME_IDS = ('dark', 'light')
-APPEARANCE_BLUR_IDS = ('off', 'soft', 'strong')
-APPEARANCE_DEPTH_IDS = ('off', 'subtle', 'immersive')
+APPEARANCE_THEME_IDS = ('noir', 'volt', 'forest', 'iron', 'carbon')
 APPEARANCE_ROLES = ('CLIENT', 'COACH')
 APPEARANCE_KEY = {'PK': 'SYSTEM#SETTINGS', 'SK': 'APPEARANCE'}
+# Styles from before the five-theme update, and the theme each one became. Used only to migrate
+# settings an admin saved under the old screen, so their intent survives the change.
+LEGACY_STYLE_THEMES = {
+    'original': 'noir', 'glass': 'noir', 'vintage': 'iron', 'oldgym': 'iron',
+    'moderngym': 'volt', 'navy': 'carbon', 'forest': 'forest', 'coral': 'volt', 'liquidcarbon': 'carbon',
+}
 
 
 def default_role_appearance() -> dict:
-    return {
-        'allowCustomize': True,
-        'styles': list(APPEARANCE_STYLE_IDS), 'palettes': list(APPEARANCE_PALETTE_IDS),
-        'scenes': list(APPEARANCE_SCENE_IDS), 'themes': list(APPEARANCE_THEME_IDS),
-        'depths': list(APPEARANCE_DEPTH_IDS),
-        'allowMotionToggle': True, 'allowVibrancy': True, 'allowBlur': True,
-        'defaults': {'style': 'original', 'palette': 'classic', 'scene': 'auto', 'theme': 'dark', 'motion': 'on', 'vibrancy': 100,
-                     'blur': 'soft', 'depth': 'subtle'},
-        'resetCounter': 0,
-    }
+    return {'allowCustomize': True, 'themes': list(APPEARANCE_THEME_IDS), 'defaultTheme': 'noir', 'resetCounter': 0}
 
 
-def _pick_ids(raw: Any, allowed: tuple, label: str) -> List[str]:
+def _pick_theme_ids(raw: Any, label: str) -> List[str]:
     if not isinstance(raw, list):
         raise HTTPException(status_code=400, detail=f'{label}: expected a list.')
-    bad = [x for x in raw if x not in allowed]
+    bad = [x for x in raw if x not in APPEARANCE_THEME_IDS]
     if bad:
         raise HTTPException(status_code=400, detail=f'{label}: unknown option "{str(bad[0])[:30]}".')
-    ids = [x for x in allowed if x in raw]  # keeps canonical order, drops duplicates
+    ids = [x for x in APPEARANCE_THEME_IDS if x in raw]  # keeps canonical order, drops duplicates
     if not ids:
-        raise HTTPException(status_code=400, detail=f'{label}: allow at least one option.')
+        raise HTTPException(status_code=400, detail=f'{label}: allow at least one theme.')
     return ids
 
 
 def normalize_role_appearance(raw: Any, previous: dict, label: str) -> dict:
     if not isinstance(raw, dict):
         raise HTTPException(status_code=400, detail=f'{label}: invalid settings.')
-    out = {
+    themes = _pick_theme_ids(raw.get('themes'), f'{label} themes')
+    default_theme = raw.get('defaultTheme')
+    if default_theme not in themes:
+        raise HTTPException(status_code=400, detail=f'{label}: the default theme must be one of the allowed themes.')
+    return {
         'allowCustomize': bool(raw.get('allowCustomize', True)),
-        'styles': _pick_ids(raw.get('styles'), APPEARANCE_STYLE_IDS, f'{label} styles'),
-        'palettes': _pick_ids(raw.get('palettes'), APPEARANCE_PALETTE_IDS, f'{label} colours'),
-        'scenes': _pick_ids(raw.get('scenes'), APPEARANCE_SCENE_IDS, f'{label} scenery'),
-        'themes': _pick_ids(raw.get('themes'), APPEARANCE_THEME_IDS, f'{label} themes'),
-        # older admin screens don't send depths: keep what was saved before
-        'depths': _pick_ids(raw['depths'], APPEARANCE_DEPTH_IDS, f'{label} depth') if 'depths' in raw
-                  else list(previous.get('depths') or APPEARANCE_DEPTH_IDS),
-        'allowMotionToggle': bool(raw.get('allowMotionToggle', True)),
-        'allowVibrancy': bool(raw.get('allowVibrancy', True)),
-        'allowBlur': bool(raw.get('allowBlur', True)),
+        'themes': themes,
+        'defaultTheme': default_theme,
+        'resetCounter': int(previous.get('resetCounter', 0)) + (1 if raw.get('resetNow') else 0),
     }
-    d = raw.get('defaults') or {}
-    try:
-        vib = int(d.get('vibrancy', 100))
-    except (TypeError, ValueError):
-        raise HTTPException(status_code=400, detail=f'{label}: vibrancy must be a number.')
-    defaults = {
-        'style': d.get('style'), 'palette': d.get('palette'), 'scene': d.get('scene'), 'theme': d.get('theme'),
-        'motion': d.get('motion') if d.get('motion') in ('on', 'off') else 'on', 'vibrancy': max(40, min(100, vib)),
-        'blur': d.get('blur', 'soft'),
-        'depth': d.get('depth') or ('subtle' if 'subtle' in out['depths'] else out['depths'][0]),
+
+
+def migrate_role_appearance(stored: dict) -> dict:
+    """Settings saved before the five-theme update held style / palette / scene lists. Keep the admin's
+    intent: the themes those styles map onto stay allowed, and the old default style picks the default."""
+    old_defaults = stored.get('defaults') or {}
+    themes = []
+    for style in stored.get('styles') or []:
+        theme = LEGACY_STYLE_THEMES.get(style)
+        if theme and theme not in themes:
+            themes.append(theme)
+    themes = [t for t in APPEARANCE_THEME_IDS if t in themes] or list(APPEARANCE_THEME_IDS)
+    wanted = LEGACY_STYLE_THEMES.get(old_defaults.get('style'))
+    return {
+        'allowCustomize': bool(stored.get('allowCustomize', True)),
+        'themes': themes,
+        'defaultTheme': wanted if wanted in themes else themes[0],
+        'resetCounter': int(stored.get('resetCounter', 0) or 0),
     }
-    if defaults['blur'] not in APPEARANCE_BLUR_IDS:
-        raise HTTPException(status_code=400, detail=f'{label}: unknown menu background option.')
-    for key, allowed in (('style', 'styles'), ('palette', 'palettes'), ('scene', 'scenes'), ('theme', 'themes'), ('depth', 'depths')):
-        if defaults[key] not in out[allowed]:
-            raise HTTPException(status_code=400, detail=f'{label}: the default {key} must be one of the allowed options.')
-    out['defaults'] = defaults
-    out['resetCounter'] = int(previous.get('resetCounter', 0)) + (1 if raw.get('resetNow') else 0)
-    return out
 
 
 def load_appearance_policy() -> dict:
     item = table.get_item(Key=APPEARANCE_KEY).get('Item') or {}
     roles = {}
     for role in APPEARANCE_ROLES:
-        base = default_role_appearance()
         stored = (item.get('roles') or {}).get(role)
-        if isinstance(stored, dict):
-            base_defaults = dict(base['defaults'])
-            base.update({k: stored[k] for k in base if k in stored})
-            # settings saved before newer options existed gain their defaults instead of missing keys
-            base['defaults'] = {**base_defaults, **(stored.get('defaults') or {})}
-        roles[role] = parse_decimals(base)
+        # 'themes' alone is ambiguous: the old screen also had a dark/light "themes" list.
+        base = stored if isinstance(stored, dict) and 'defaultTheme' in stored else \
+            (migrate_role_appearance(stored) if isinstance(stored, dict) else default_role_appearance())
+        merged = {**default_role_appearance(), **base}
+        merged['themes'] = [t for t in APPEARANCE_THEME_IDS if t in merged['themes']] or list(APPEARANCE_THEME_IDS)
+        if merged['defaultTheme'] not in merged['themes']:
+            merged['defaultTheme'] = merged['themes'][0]
+        roles[role] = parse_decimals(merged)
     return {'roles': roles, 'updatedAt': item.get('updatedAt'), 'updatedBy': item.get('updatedBy')}
 
 
