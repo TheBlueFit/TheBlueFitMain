@@ -26,6 +26,7 @@ import { AppContext } from "@/components/shell/AppContext";
 import MobilePermissionsGate from "@/components/shared/MobilePermissionsGate";
 import HealthAutoSync from "@/components/client/HealthAutoSync";
 import PushRegistrar from "@/components/shell/PushRegistrar";
+import WorkoutAlertManager from "@/components/client/WorkoutAlertManager";
 
 type NavItem = {
   href: string;
