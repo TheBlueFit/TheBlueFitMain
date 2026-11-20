@@ -2,7 +2,7 @@
 // Pure and self-contained so the same code runs before first paint (see LOOK_INIT_SCRIPT).
 
 export type PaletteId = "classic" | "ocean" | "violet" | "rose" | "ember" | "mint" | "graphite" | "sepia" | "volt" | "azure" | "emerald" | "coral";
-export type StyleId = "original" | "glass" | "vintage" | "oldgym" | "moderngym" | "navy" | "forest" | "coral";
+export type StyleId = "original" | "glass" | "vintage" | "oldgym" | "moderngym" | "navy" | "forest" | "coral" | "liquidcarbon";
 export type BlurId = "off" | "soft" | "strong";
 export type SceneId = "auto" | "night" | "morning" | "afternoon" | "evening" | "off";
 export type DepthId = "off" | "subtle" | "immersive";
@@ -32,7 +32,8 @@ export const STYLES: { id: StyleId; label: string; blurb: string; palette: Palet
   { id: "moderngym", label: "Modern Gym", blurb: "Sharp, athletic, high contrast", palette: "volt" },
   { id: "navy", label: "Navy Pulse", blurb: "Deep navy, one calm blue", palette: "azure" },
   { id: "forest", label: "Forest Energy", blurb: "Fresh fitness green", palette: "emerald" },
-  { id: "coral", label: "Ink & Coral", blurb: "Charcoal with a bold coral", palette: "coral" },
+    { id: "coral", label: "Ink & Coral", blurb: "Charcoal with a bold coral", palette: "coral" },
+  { id: "liquidcarbon", label: "Liquid Carbon", blurb: "Carbon fibre depth, teal pulse", palette: "mint" },
 ];
 
 export const BLURS: { id: BlurId; label: string }[] = [
