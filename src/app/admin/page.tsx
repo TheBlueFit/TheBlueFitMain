@@ -284,15 +284,16 @@
 
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Shield, Users, Activity, Database, Plus, Edit2, Trash2, Key, PieChart, Utensils, X, Save, RefreshCw, Monitor, HardDrive, Palette } from 'lucide-react';
+import { Shield, Users, Activity, Database, Plus, Edit2, Trash2, Key, PieChart, Utensils, X, Save, RefreshCw, Monitor, HardDrive, Palette, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import { AdminMonitor, authSession, dashboardAPI } from '@/services/api';
 import StorageCleanup from '@/components/admin/StorageCleanup';
 import AppearancePolicy from '@/components/admin/AppearancePolicy';
+import AdminSecurity from '@/components/admin/AdminSecurity';
 
 export default function AdminDashboard() {
   const [currentUserName, setCurrentUserName] = useState("Administrator");
-  const [activeTab, setActiveTab] = useState<'users' | 'storage' | 'appearance' | 'services' | 'analytics'>('users');
+  const [activeTab, setActiveTab] = useState<'users' | 'storage' | 'appearance' | 'security' | 'services' | 'analytics'>('users');
   const [dbUsers, setDbUsers] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
@@ -494,6 +495,13 @@ export default function AdminDashboard() {
               <Palette size={16} /> Appearance
             </button>
             <button 
+              className={`${activeTab === 'security' ? 'btn-primary' : 'btn-secondary'} admin-tab`} 
+              onClick={() => setActiveTab('security')}
+              style={{ padding: '12px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+            >
+              <ShieldCheck size={16} /> Security
+            </button>
+            <button 
               className={`${activeTab === 'services' ? 'btn-primary' : 'btn-secondary'} admin-tab`} 
               onClick={() => setActiveTab('services')}
               style={{ padding: '12px', flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
@@ -596,6 +604,8 @@ export default function AdminDashboard() {
           {activeTab === 'storage' && <StorageCleanup />}
 
           {activeTab === 'appearance' && <AppearancePolicy />}
+
+          {activeTab === 'security' && <AdminSecurity />}
 
           {activeTab === 'services' && (
             <div className="fade-in">

@@ -24,3 +24,8 @@ Tests: `python tests/run_tests.py` (71), `python tests/test_new_features.py` (51
 
 ## Verified end-to-end (real backend + browser)
 Login/persistence, theme toggle, daily log → coach steps, two-way chat with unread/seen, template import, coach dashboard/roster/progress, admin dashboard/monitor (client shows "Signed out" after logout), no horizontal overflow or console errors on any page at phone width, both themes.
+
+## Security (this release)
+- **Admin two-factor (authenticator app)** – Admin → Security. Enter the setup key in Google Authenticator / Authy / 1Password, confirm one code, and keep the 8 one-time backup codes. With it on, a password alone cannot open the dashboard; switching it off needs the password *and* a current code.
+- **AWS WAF on the API** – one IP may make 60 sign-in requests in five minutes; everything else passes straight through. Ships with the stack (`backend/template.yaml`).
+- **Sessions** – 7-day tokens that slide forward daily while the app is in use, strict token-claim checks (signature, algorithm, role, issue/expiry dates), per-IP limits on sign-in and health ingest, and security headers on both the API and the static site.

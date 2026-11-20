@@ -50,3 +50,8 @@ Login/persistence, theme toggle, daily log → coach steps, two-way chat with un
 - The scenery is drawn live (no GIF/video files), so it is tiny, follows dark/light and the chosen colours, runs at ~30 fps, pauses when the app is in the background, and shows a still frame when Animations is off or "Reduce motion" is on.
 - New fonts (Playfair Display, Lora, Oswald, Barlow, Barlow Condensed) are loaded from Google Fonts like Outfit; the app falls back gracefully offline.
 - Frontend only: no backend change.
+
+## Security (this release)
+- **Admin two-factor (authenticator app)** – Admin → Security. Enter the setup key in Google Authenticator / Authy / 1Password, confirm one code, and keep the 8 one-time backup codes. With it on, a password alone cannot open the dashboard; switching it off needs the password *and* a current code.
+- **AWS WAF on the API** – one IP may make 60 sign-in requests in five minutes; everything else passes straight through. Ships with the stack (`backend/template.yaml`).
+- **Sessions** – 7-day tokens that slide forward daily while the app is in use, strict token-claim checks (signature, algorithm, role, issue/expiry dates), per-IP limits on sign-in and health ingest, and security headers on both the API and the static site.

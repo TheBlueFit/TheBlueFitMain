@@ -6,13 +6,14 @@ import logging
 import os
 import re
 import secrets
+import struct
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
@@ -699,6 +700,7 @@ class LoginPayload(BaseModel):
     identifier: str
     password: str
     role: Optional[str] = None
+    code: Optional[str] = None      # authenticator / backup code, admins with two-factor on
 
 
 class DevicePayload(BaseModel):
@@ -981,6 +983,163 @@ def login_throttle(request: Request) -> None:
     rate_limit(request, 'login', 20, 300)
 
 
+# -------------------------- admin two-factor (TOTP) -------------------------
+# RFC 6238: 6 digits, 30-second step, SHA-1, one step of clock drift tolerated either way.
+# The secret is returned once, when the admin sets the app up, and lives on their profile row.
+MFA_ISSUER = 'The Blue Fit'
+MFA_STEP_SECONDS = 30
+MFA_DIGITS = 6
+MFA_RECOVERY_CODES = 8
+
+
+def _b32encode(raw: bytes) -> str:
+    return base64.b32encode(raw).decode('ascii').rstrip('=')
+
+
+def new_totp_secret() -> str:
+    return _b32encode(secrets.token_bytes(20))
+
+
+def totp_code(secret: str, counter: int) -> str:
+    key = base64.b32decode(secret + '=' * (-len(secret) % 8), casefold=True)
+    digest = hmac.new(key, struct.pack('>Q', counter), hashlib.sha1).digest()
+    offset = digest[-1] & 0x0F
+    value = struct.unpack('>I', digest[offset:offset + 4])[0] & 0x7FFFFFFF
+    return str(value % (10 ** MFA_DIGITS)).zfill(MFA_DIGITS)
+
+
+def totp_matches(secret: Optional[str], code: Optional[str], at: Optional[float] = None) -> bool:
+    if not secret:
+        return False
+    digits = re.sub(r'\D', '', str(code or ''))
+    if len(digits) != MFA_DIGITS:
+        return False
+    step = int((at if at is not None else time.time()) // MFA_STEP_SECONDS)
+    return any(hmac.compare_digest(totp_code(secret, step + drift), digits) for drift in (-1, 0, 1))
+
+
+def _canonical_code(code: Optional[str]) -> str:
+    return re.sub(r'[^0-9A-Za-z]', '', str(code or '')).upper()
+
+
+def _hash_recovery(code: str) -> str:
+    return hashlib.sha256(_canonical_code(code).encode('utf-8')).hexdigest()
+
+
+def new_recovery_codes(count: int = MFA_RECOVERY_CODES) -> List[str]:
+    """Backup codes, shown to the admin once; only their hashes are stored."""
+    codes = []
+    for _ in range(count):
+        raw = secrets.token_hex(5).upper()
+        codes.append(f'{raw[:5]}-{raw[5:]}')
+    return codes
+
+
+def _matching_recovery_hash(profile: dict, code: Optional[str]) -> Optional[str]:
+    canonical = _canonical_code(code)
+    if len(canonical) != 10:
+        return None
+    wanted = _hash_recovery(canonical)
+    for stored in profile.get('mfaRecoveryHashes') or []:
+        if hmac.compare_digest(str(stored), wanted):
+            return str(stored)
+    return None
+
+
+def verify_mfa(profile: dict, code: Optional[str]) -> bool:
+    """An authenticator code, or a backup code (backup codes work once)."""
+    if totp_matches(profile.get('mfaSecret'), code):
+        return True
+    spent = _matching_recovery_hash(profile, code)
+    if not spent:
+        return False
+    remaining = [h for h in (profile.get('mfaRecoveryHashes') or []) if str(h) != spent]
+    table.update_item(
+        Key={'PK': profile['PK'], 'SK': PROFILE_SK},
+        UpdateExpression='SET mfaRecoveryHashes = :r',
+        ExpressionAttributeValues={':r': remaining},
+    )
+    return True
+
+
+def totp_uri(profile: dict, secret: str) -> str:
+    label = quote(f"{MFA_ISSUER}:{profile.get('userCode') or short_id(profile['PK'])}")
+    params = f"secret={secret}&issuer={quote(MFA_ISSUER)}&digits={MFA_DIGITS}&period={MFA_STEP_SECONDS}"
+    return f"otpauth://totp/{label}?{params}"
+
+
+class MfaCodePayload(BaseModel):
+    code: str
+
+
+class MfaDisablePayload(BaseModel):
+    password: str
+    code: str
+
+
+@app.get("/admin/security")
+def admin_security(user: dict = Depends(require_roles('ADMIN'))):
+    profile = get_profile(user['pk']) or {}
+    return {
+        'mfaEnabled': bool(profile.get('mfaEnabled')),
+        'mfaPending': bool(profile.get('mfaPendingSecret')),
+        'recoveryCodesRemaining': len(profile.get('mfaRecoveryHashes') or []),
+    }
+
+
+@app.post("/admin/security/mfa/start")
+def admin_mfa_start(user: dict = Depends(require_roles('ADMIN')), _throttle: None = Depends(login_throttle)):
+    """Step 1: hand the admin a fresh key to type into their authenticator app."""
+    profile = get_profile(user['pk'])
+    if profile.get('mfaEnabled'):
+        raise HTTPException(status_code=409, detail='Two-factor is already on. Turn it off before setting up another device.')
+    secret = new_totp_secret()
+    table.update_item(
+        Key={'PK': profile['PK'], 'SK': PROFILE_SK},
+        UpdateExpression='SET mfaPendingSecret = :s',
+        ExpressionAttributeValues={':s': secret},
+    )
+    return {'secret': secret, 'otpauthUrl': totp_uri(profile, secret)}
+
+
+@app.post("/admin/security/mfa/enable")
+def admin_mfa_enable(payload: MfaCodePayload, user: dict = Depends(require_roles('ADMIN'))):
+    """Step 2: a working code proves the app is set up. Backup codes are shown here, once."""
+    profile = get_profile(user['pk'])
+    pending = profile.get('mfaPendingSecret')
+    if not pending:
+        raise HTTPException(status_code=409, detail='Start the setup again - the setup key has expired.')
+    if not totp_matches(pending, payload.code):
+        raise HTTPException(status_code=400, detail='That code did not match. Check your phone clock and try the next code.')
+    codes = new_recovery_codes()
+    table.update_item(
+        Key={'PK': profile['PK'], 'SK': PROFILE_SK},
+        UpdateExpression='SET mfaEnabled = :y, mfaSecret = :s, mfaRecoveryHashes = :r, mfaPendingSecret = :e, mfaEnabledAt = :t',
+        ExpressionAttributeValues={':y': True, ':s': pending, ':r': [_hash_recovery(c) for c in codes],
+                                   ':e': '', ':t': now_iso()},
+    )
+    return {'mfaEnabled': True, 'recoveryCodes': codes}
+
+
+@app.post("/admin/security/mfa/disable")
+def admin_mfa_disable(payload: MfaDisablePayload, user: dict = Depends(require_roles('ADMIN'))):
+    """Password plus a current code, so a walk-up attacker on an open session cannot switch it off."""
+    profile = get_profile(user['pk'])
+    if not profile.get('mfaEnabled'):
+        raise HTTPException(status_code=409, detail='Two-factor is not switched on.')
+    if not verify_password(payload.password, profile.get('passwordHash', '')):
+        register_login_failure(profile)
+        raise HTTPException(status_code=401, detail='Wrong password.')
+    if not verify_mfa(profile, payload.code):
+        raise HTTPException(status_code=400, detail='That authenticator code is not valid.')
+    table.update_item(
+        Key={'PK': profile['PK'], 'SK': PROFILE_SK},
+        UpdateExpression='SET mfaEnabled = :n, mfaSecret = :e, mfaPendingSecret = :e, mfaRecoveryHashes = :r',
+        ExpressionAttributeValues={':n': False, ':e': '', ':r': []},
+    )
+    return {'mfaEnabled': False}
+
+
 # ----------------------------- app-level handlers --------------------------
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
@@ -1028,6 +1187,16 @@ def login(payload: LoginPayload, _throttle: None = Depends(login_throttle)):
     # The role toggle on the login screen must match the account (admins may use either)
     if payload.role and profile.get('role') != 'ADMIN' and payload.role.upper() != profile.get('role'):
         raise generic
+
+    # Admins may switch on an authenticator app. The password is already correct at this point, so
+    # asking for the code reveals nothing about the account, and a wrong code counts towards lockout.
+    if profile.get('mfaEnabled'):
+        if not str(payload.code or '').strip():
+            raise HTTPException(status_code=401, detail="MFA_REQUIRED")
+        if not verify_mfa(profile, payload.code):
+            register_login_failure(profile)
+            raise HTTPException(status_code=401, detail="That authenticator code is not valid. Try the next one.")
+        profile = get_profile(profile['PK']) or profile   # a backup code is spent in the table
 
     clear_login_failures(profile)
 

@@ -427,6 +427,7 @@ export interface AdminMonitor {
 }
 
 export interface AppearancePolicyAll { roles: { CLIENT: RolePolicy; COACH: RolePolicy }; updatedAt?: string | null; updatedBy?: string | null }
+export interface AdminSecurityStatus { mfaEnabled: boolean; mfaPending: boolean; recoveryCodesRemaining: number }
 export interface CleanupPreview {
   days: number; cutoff: string; parkedFailed: number;
   categories: Record<string, { count: number; bytes: number }>;
@@ -443,10 +444,10 @@ export interface CleanupRunRow {
 
 export const dashboardAPI = {
   // --- AUTH & FIRST-TIME SETUP ---
-  login: async (role: 'CLIENT' | 'COACH' | 'ADMIN' | undefined, identifier: string, password: string) => {
+  login: async (role: 'CLIENT' | 'COACH' | 'ADMIN' | undefined, identifier: string, password: string, code?: string) => {
     const user = await apiFetch<UserSession>('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ identifier, password, ...(role ? { role } : {}) }),
+      body: JSON.stringify({ identifier, password, ...(role ? { role } : {}), ...(code ? { code } : {}) }),
     });
     // A temporary-password login has no token yet: keep it in memory only, never in storage
     if (user.token && !user.mustChangePassword && user.onboardingCompleted !== false) authSession.set(user);
@@ -479,6 +480,20 @@ export const dashboardAPI = {
       /* best effort */
     }
   },
+
+  // --- ADMIN TWO-FACTOR (authenticator app) ---
+  getAdminSecurity: () => apiFetch<AdminSecurityStatus>('/admin/security'),
+  startAdminMfa: () => apiFetch<{ secret: string; otpauthUrl: string }>('/admin/security/mfa/start', { method: 'POST' }),
+  enableAdminMfa: (code: string) =>
+    apiFetch<{ mfaEnabled: boolean; recoveryCodes: string[] }>('/admin/security/mfa/enable', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+  disableAdminMfa: (password: string, code: string) =>
+    apiFetch<{ mfaEnabled: boolean }>('/admin/security/mfa/disable', {
+      method: 'POST',
+      body: JSON.stringify({ password, code }),
+    }),
 
   /** Heartbeat: marks the user online and returns their unread message count. */
   ping: () => apiFetch<{ serverTime: string; unreadMessages: number }>('/presence/ping', { method: 'POST' }),

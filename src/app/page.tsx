@@ -44,6 +44,9 @@ export default function OpeningPortalPage() {
   const [password, setPassword] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Admins with an authenticator app get a second step: the 6-digit code (or a backup code).
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaCode, setMfaCode] = useState("");
 
   // First-time setup state
   const [pendingUser, setPendingUser] = useState<UserSession | null>(null);
@@ -88,7 +91,12 @@ export default function OpeningPortalPage() {
 
     try {
       // Pass role as undefined so the backend detects it from the user ID
-      const user = await dashboardAPI.login(undefined as any, identifier.trim(), password);
+      const user = await dashboardAPI.login(
+        undefined as any,
+        identifier.trim(),
+        password,
+        mfaRequired ? mfaCode.trim() : undefined
+      );
 
       if (user.mustChangePassword || user.onboardingCompleted === false) {
         setPendingUser(user);
@@ -97,7 +105,13 @@ export default function OpeningPortalPage() {
         routeByRole(user.role);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Invalid ID or password.");
+      const message = err instanceof Error ? err.message : "";
+      if (message === "MFA_REQUIRED") {
+        setMfaRequired(true);
+        setError("Enter the 6-digit code from your authenticator app.");
+        return;
+      }
+      setError(message || "Invalid ID or password.");
     } finally {
       setIsSubmitting(false);
     }
@@ -254,6 +268,24 @@ export default function OpeningPortalPage() {
                 style={inputStyle}
               />
             </div>
+
+            {mfaRequired && (
+              <div className="fade-in">
+                <label className="label-text">Authenticator code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  placeholder="6-digit code, or a backup code"
+                  maxLength={12}
+                  autoFocus
+                  required
+                  style={inputStyle}
+                />
+              </div>
+            )}
 
             {error && <div className="error-banner">{error}</div>}
 
