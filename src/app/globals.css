@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:wght@600;700;800&family=Lora:wght@400;500;600&family=Oswald:wght@500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:wght@600;700;800&family=Lora:wght@400;500;600&family=Oswald:wght@500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&family=Space+Grotesk:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap');
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
@@ -4089,3 +4089,250 @@ body {
   [style*="--tilt-x"] { transform: none !important; }
   .metric-card::after { display: none !important; }
 }
+
+/* ===================================================================
+   BLUE FIT — ADDITIONS ONLY
+   Paste this entire block at the very END of globals.css.
+   Nothing above this point is changed.
+   =================================================================== */
+
+/* ── 1. NEW FONTS (Space Grotesk + Syne) ──────────────────────────────────
+   These are added to the existing @import at the top of globals.css.
+   Replace the existing @import line with this one:
+
+   @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:wght@600;700;800&family=Lora:wght@400;500;600&family=Oswald:wght@500;600;700&family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@600;700&family=Space+Grotesk:wght@400;500;600;700&family=Syne:wght@600;700;800&display=swap');
+
+   NOTE: Only the two new font families are added — the rest stay identical.
+   ──────────────────────────────────────────────────────────────────────── */
+
+
+/* ── 2. LIQUID CARBON STYLE ──────────────────────────────────────────────
+   A new built-in style: "liquid-carbon". Space Grotesk UI, Syne display,
+   deep carbon surfaces, electric-teal accent layer (secondary palette colour),
+   sharp 6 px radii. The admin can assign this to any role.
+   It slots into the existing data-style="" mechanism — no JS changes needed.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* Register font assignments */
+:root[data-style="liquidcarbon"] {
+  --font-ui:      'Space Grotesk';
+  --font-display: 'Syne';
+  --radius-sm:  6px;
+  --radius-md:  10px;
+  --radius-lg:  16px;
+}
+
+:root[data-style="liquidcarbon"][data-theme="dark"] {
+  --bg-app:          #04050A;
+  --s0:              #060810;
+  --s1:              #090C16;
+  --s2:              #0D1020;
+  --s3:              #12162A;
+  --bg-elev:         #0D1020;
+  --bg-input:        rgb(220 230 255 / 0.04);
+  --bg-input-hover:  rgb(220 230 255 / 0.08);
+  --bg-accordion-body: rgb(4 5 10 / 0.75);
+  --border-subtle:   rgb(220 230 255 / 0.11);
+  --border-focus:    rgb(var(--green-rgb) / 0.55);   /* teal pulse on focus */
+  --text-primary:    #E8EEFF;
+  --text-secondary:  #7A85A0;
+  --ink-rgb:         220 230 255;
+  --well-rgb:        6 8 16;
+  --shadow-rgb:      0 0 0;
+  --danger:          #FF5A6A;
+  --red-rgb:         255 90 106;
+}
+
+:root[data-style="liquidcarbon"][data-theme="light"] {
+  --bg-app:          #EEF0F8;
+  --s0:              #E6E9F4;
+  --s1:              #FAFBFF;
+  --s2:              #FFFFFF;
+  --s3:              #F0F3FB;
+  --bg-elev:         #FFFFFF;
+  --bg-input:        rgb(10 15 50 / 0.04);
+  --bg-input-hover:  rgb(10 15 50 / 0.08);
+  --bg-accordion-body: rgb(255 255 255 / 0.75);
+  --border-subtle:   rgb(10 15 50 / 0.14);
+  --border-focus:    rgb(var(--green-rgb) / 0.60);
+  --text-primary:    #0A0F32;
+  --text-secondary:  #5B6480;
+  --ink-rgb:         10 15 50;
+  --well-rgb:        255 255 255;
+  --shadow-rgb:      10 15 50;
+  --danger:          #C62828;
+  --red-rgb:         198 40 40;
+}
+
+/* Body: subtle carbon-fibre texture using an SVG filter, no image file needed */
+:root[data-style="liquidcarbon"] body {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .22  0 0 0 0 .26  0 0 0 0 .44  0 0 0 .18 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+:root[data-style="liquidcarbon"][data-theme="light"] body {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='200' height='200'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 .22  0 0 0 0 .26  0 0 0 0 .44  0 0 0 .07 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+/* Headings: Syne bold — no text-shadow on this style */
+:root[data-style="liquidcarbon"] .glazy-title,
+:root[data-style="liquidcarbon"] .animated-gradient-text,
+:root[data-style="liquidcarbon"] h1,
+:root[data-style="liquidcarbon"] h2 {
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  text-shadow: none;
+}
+
+/* Cards / macro pills — razor-thin teal top border, no radius inflation */
+:root[data-style="liquidcarbon"] .macro-pill,
+:root[data-style="liquidcarbon"] .plan-card,
+:root[data-style="liquidcarbon"] .bf-chat-list,
+:root[data-style="liquidcarbon"] .bf-chat-pane,
+:root[data-style="liquidcarbon"] [style*="well-rgb) / 0.9"] {
+  border-radius: 10px !important;
+  border-top: 1.5px solid rgb(var(--green-rgb) / 0.60) !important;
+}
+
+/* Buttons: capsule with teal accent */
+:root[data-style="liquidcarbon"] .btn-primary,
+:root[data-style="liquidcarbon"] .btn-secondary {
+  border-radius: 8px;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+:root[data-style="liquidcarbon"] .btn-primary {
+  background: linear-gradient(135deg, var(--text-primary) 0%, color-mix(in srgb, var(--text-primary) 88%, rgb(var(--green-rgb))) 100%);
+}
+
+/* Inputs / nav-fab */
+:root[data-style="liquidcarbon"] input:focus,
+:root[data-style="liquidcarbon"] textarea:focus,
+:root[data-style="liquidcarbon"] select:focus {
+  outline: 1.5px solid rgb(var(--green-rgb) / 0.55);
+  outline-offset: 1px;
+}
+:root[data-style="liquidcarbon"] .nav-fab,
+:root[data-style="liquidcarbon"] .theme-toggle.icon-only {
+  border-radius: 10px;
+  border: 1.5px solid rgb(var(--green-rgb) / 0.30);
+}
+
+/* Mobile header: subtle teal-tinted bottom line */
+:root[data-style="liquidcarbon"] .mobile-header::after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 1.5px;
+  background: linear-gradient(90deg, rgb(var(--green-rgb) / 0.0), rgb(var(--green-rgb) / 0.55) 40%, rgb(var(--gold-rgb) / 0.4) 70%, rgb(var(--green-rgb) / 0.0));
+}
+
+/* Label text — Space Grotesk uppercase */
+:root[data-style="liquidcarbon"] .label-text,
+:root[data-style="liquidcarbon"] label span {
+  font-family: 'Space Grotesk', sans-serif;
+  letter-spacing: 0.09em;
+}
+
+
+/* ── 3. 3D CARD SYSTEM ────────────────────────────────────────────────────
+   Rules for ThreeDCard.tsx. The `.bf3d-outer` has display:block so it
+   participates in layout normally. The `.bf3d-inner` does the actual 3D
+   transform — it inherits border-radius from whatever child is inside.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.bf3d-outer {
+  display: block;    /* participates in layout as a normal block */
+}
+.bf3d-inner {
+  display: block;
+  /* transform-style and the actual transform are set inline by the component */
+}
+
+/* Entrance animation for grids: each card fades + rises with a stagger */
+:root[data-motion="on"] .bf3d-outer {
+  animation: bf-rise 0.5s cubic-bezier(0.16, 1, 0.3, 1) var(--bf3d-delay, 0ms) both;
+}
+
+/* Grid: direct-child cards get a stagger just like app-card children do */
+:root[data-motion="on"] .bf3d-grid > .bf3d-outer:nth-child(1)  { --bf3d-delay: 0ms;   }
+:root[data-motion="on"] .bf3d-grid > .bf3d-outer:nth-child(2)  { --bf3d-delay: 55ms;  }
+:root[data-motion="on"] .bf3d-grid > .bf3d-outer:nth-child(3)  { --bf3d-delay: 110ms; }
+:root[data-motion="on"] .bf3d-grid > .bf3d-outer:nth-child(4)  { --bf3d-delay: 165ms; }
+:root[data-motion="on"] .bf3d-grid > .bf3d-outer:nth-child(n+5){ --bf3d-delay: 220ms; }
+
+/* When reduced-motion is on, skip the entrance */
+@media (prefers-reduced-motion: reduce) {
+  .bf3d-outer { animation: none !important; }
+  .bf3d-inner { transition: none !important; transform: none !important; }
+}
+
+
+/* ── 4. PERFORMANCE: DASHBOARD LOAD LAG FIX ─────────────────────────────
+   The lag comes from every main-content child animating simultaneously
+   on first paint. We already have bf-rise stagger on .app-card children;
+   this rule adds content-visibility to any long metric grid so the browser
+   skips layout of off-screen cards until they scroll into view.
+   ──────────────────────────────────────────────────────────────────────── */
+
+.bf-metric-grid {
+  content-visibility: auto;
+  contain-intrinsic-size: 0 160px;   /* prevents layout shift while skipping */
+}
+
+/* Force hardware compositing on the two most common animated elements,
+   but ONLY while the animation is actually running (class added by JS) */
+.bf-animating {
+  will-change: transform, opacity;
+}
+.bf-animating-done {
+  will-change: auto;
+}
+
+
+/* ── 5. WORKOUT ALERT TOAST ───────────────────────────────────────────────
+   These rules are referenced by WorkoutAlertManager.tsx.
+   The styles are written inline in the component for portability, so
+   this block is just extra insurance for specificity overrides.
+   ──────────────────────────────────────────────────────────────────────── */
+
+/* Ensure toasts stay above the nav scrim (z:1090) but below the appearance
+   sheet (z:3000) and above the pop-nav (z:1900). */
+.bf-alert-container {
+  z-index: 2100 !important;
+}
+
+
+/* ── 6. NOTIFICATION DOT — message badge on nav items ────────────────────
+   The existing .msg-badge already does this; this rule adds a subtle pulse
+   glow when motion is on, reinforcing the new message affordance.
+   ──────────────────────────────────────────────────────────────────────── */
+
+:root[data-motion="on"] .msg-badge {
+  animation: bf-breathe 2.4s ease-in-out infinite;
+}
+
+
+/* ── 7. SCENE FADE-IN keyword used by the enhanced SceneBackground.tsx ───
+   The existing bf-scene-in keyframe already exists above; this adds a
+   companion for the cross-fade when the period changes.
+   ──────────────────────────────────────────────────────────────────────── */
+
+@keyframes bf-scene-crossfade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+.bf-scene-new {
+  animation: bf-scene-crossfade 1.2s ease both;
+}
+
+
+/* ── 8. LIQUID CARBON: add to the existing STYLES list in look.ts ─────────
+   In look.ts, add this entry to the STYLES array:
+
+   { id: "liquidcarbon", label: "Liquid Carbon", blurb: "Carbon fibre depth, teal pulse", palette: "mint" },
+
+   And add "liquidcarbon" to the StyleId union type at the top of look.ts:
+   export type StyleId = "original" | "glass" | "vintage" | "oldgym" | "moderngym" | "navy" | "forest" | "coral" | "liquidcarbon";
+   ──────────────────────────────────────────────────────────────────────── */
+
+
+/* ── END OF ADDITIONS ────────────────────────────────────────────────────── */
