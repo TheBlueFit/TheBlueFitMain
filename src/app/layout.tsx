@@ -478,6 +478,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <MobilePermissionsGate>
             {/* Athletes: health numbers refresh by themselves whenever the app opens or returns to the foreground */}
             {role === "CLIENT" && <HealthAutoSync />}
+            {role === "CLIENT" && <WorkoutAlertManager />}
             {/* Coaches and athletes: phone notification for new messages, even when the app is closed */}
             <PushRegistrar />
             <main className="main-content">{children}</main>
