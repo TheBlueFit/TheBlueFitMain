@@ -481,7 +481,7 @@ def pct_of(value: Any, goal: float) -> Optional[int]:
 
 def health_view(item: Optional[dict]) -> dict:
     item = item or {}
-    return {k: item.get(k) for k in ('steps', 'sleepHours', 'calories', 'heartRate', 'hydration')}
+    return {k: item.get(k) for k in ('steps', 'sleepHours', 'calories', 'heartRate', 'hydration', 'distanceKm')}
 
 
 def latest_health(client_pk: str):
@@ -753,8 +753,15 @@ class HealthMetricsPayload(BaseModel):
     calories: Optional[int] = None
     heartRate: Optional[int] = None
     hydration: Optional[float] = None   # litres
+    distanceKm: Optional[float] = None  # distance walked / run, in kilometres
     date: Optional[str] = None          # the phone's local date (YYYY-MM-DD); defaults to today in UTC
-    source: Optional[str] = None        # 'device' (phone sensors) or 'manual' (typed in by the athlete)
+    source: Optional[str] = None        # 'device' (phone sensors), 'manual' (typed in) or 'health-connect' (Android)
+    # Who produced the numbers. Health Connect writes are only accepted when the Android app is the
+    # client and the trusted Health Connect package provided automatic data (see save_health_metrics).
+    provider: Optional[str] = None
+    platform: Optional[str] = None      # 'android' | 'ios' | 'web'
+    syncMode: Optional[str] = None      # 'automated' | 'manual'
+    sensorTimestamp: Optional[str] = None
 
 
 
@@ -2913,7 +2920,14 @@ def get_client_progress(coachId: str, clientId: str, user: dict = Depends(requir
     })
 
 
-def store_health_snapshot(client_pk: str, payload: HealthMetricsPayload, source: str) -> str:
+# Android Health Connect is the only automated source we accept, and only from the real system package.
+HEALTH_CONNECT_SOURCE = 'health-connect'
+TRUSTED_HEALTH_PROVIDERS = frozenset({'com.google.android.apps.healthdata'})
+# The numbers a phone measures. On Android these may not be typed in by hand (see save_health_metrics).
+SENSOR_METRICS = ('steps', 'sleepHours', 'calories', 'heartRate', 'distanceKm')
+
+
+def store_health_snapshot(client_pk: str, payload: HealthMetricsPayload, source: str, verified: bool = False) -> str:
     """Validate and write one day's health snapshot. Shared by the signed-in app and by the
     token-based iPhone/Apple Health ingest. Returns the day that was written."""
     today = utc_today()
@@ -2934,6 +2948,7 @@ def store_health_snapshot(client_pk: str, payload: HealthMetricsPayload, source:
     check_range('Calories', payload.calories, 0, 20000)
     check_range('Heart rate', payload.heartRate, 20, 250)
     check_range('Water (litres)', payload.hydration, 0, 15)
+    check_range('Distance (km)', payload.distanceKm, 0, 500)
 
     update_map: Dict[str, Any] = {}
     if payload.steps is not None:
@@ -2946,6 +2961,8 @@ def store_health_snapshot(client_pk: str, payload: HealthMetricsPayload, source:
         update_map['heartRate'] = int(payload.heartRate)
     if payload.hydration is not None:
         update_map['hydration'] = Decimal(str(round(payload.hydration, 2)))
+    if payload.distanceKm is not None:
+        update_map['distanceKm'] = Decimal(str(round(payload.distanceKm, 2)))
 
     if not update_map:
         raise HTTPException(status_code=400, detail="No health metrics provided.")
@@ -2953,6 +2970,11 @@ def store_health_snapshot(client_pk: str, payload: HealthMetricsPayload, source:
     update_map['updatedAt'] = now_iso()
     update_map['type'] = 'HEALTH_SNAPSHOT'
     update_map['source'] = source
+    update_map['verified'] = bool(verified)
+    for key in ('provider', 'platform', 'syncMode', 'sensorTimestamp'):
+        value = getattr(payload, key, None)
+        if isinstance(value, str) and value.strip():
+            update_map[key] = value.strip()[:120]
 
     set_parts = [f"#{k} = :{k}" for k in update_map]
     expr_names = {f"#{k}": k for k in update_map}
@@ -2969,12 +2991,30 @@ def store_health_snapshot(client_pk: str, payload: HealthMetricsPayload, source:
 
 @app.put("/athlete/health-metrics")
 def save_health_metrics(payload: HealthMetricsPayload, user: dict = Depends(require_roles('CLIENT'))):
-    """Store one day's steps / sleep / water / calories / heart-rate for the signed-in athlete.
+    """Store one day's steps / sleep / water / calories / distance / heart-rate for the signed-in athlete.
     Values come either from the phone's health sensors or are typed in by the athlete.
-    The coach sees the same numbers."""
-    source = 'manual' if payload.source == 'manual' else 'device'
-    day = store_health_snapshot(user['pk'], payload, source)
-    return {"message": "Health metrics saved", "date": day}
+
+    Android numbers must come from Health Connect: a write that claims to be an Android client may not
+    carry hand-typed sensor values, and an automated write is only accepted from the trusted Health
+    Connect package in automated mode. That is what makes the Android figures tamper-proof; the coach
+    sees `verified` alongside them. iPhone / web athletes keep typing their numbers in."""
+    automated = payload.source == HEALTH_CONNECT_SOURCE
+    if automated:
+        if payload.platform != 'android':
+            raise HTTPException(status_code=400, detail="Health Connect data must come from the Android app.")
+        if payload.syncMode != 'automated' or payload.provider not in TRUSTED_HEALTH_PROVIDERS:
+            raise HTTPException(status_code=400, detail="Unverified Health Connect data was ignored.")
+        source, verified = HEALTH_CONNECT_SOURCE, True
+    else:
+        source, verified = ('manual' if payload.source == 'manual' else 'device'), False
+        typed = [k for k in SENSOR_METRICS if getattr(payload, k, None) is not None]
+        if payload.platform == 'android' and typed:
+            raise HTTPException(
+                status_code=400,
+                detail="On Android these numbers are read from Health Connect. Tap Sync to update them.",
+            )
+    day = store_health_snapshot(user['pk'], payload, source, verified)
+    return {"message": "Health metrics saved", "date": day, "verified": verified}
 
 
 # ---------------------------------------------------------------------------
@@ -3074,6 +3114,7 @@ async def health_sync_ingest(request: Request, authorization: Optional[str] = He
         return None
 
     steps, calories, hr = num('steps'), num('calories', 'activeEnergy'), num('heartRate')
+    distance = num('distanceKm', 'distance', 'distanceKilometers')
     sleep_h = num('sleepHours')
     if sleep_h is None:
         mins = num('sleepMinutes')
@@ -3086,6 +3127,7 @@ async def health_sync_ingest(request: Request, authorization: Optional[str] = He
         calories=int(round(calories)) if calories is not None else None,
         heartRate=int(round(hr)) if hr is not None else None,
         hydration=round(water, 2) if water is not None else None,
+        distanceKm=round(distance, 2) if distance is not None else None,
         date=str(date_val).strip()[:10] if isinstance(date_val, str) and date_val.strip() else None,
     )
     day = store_health_snapshot(client_pk, payload, 'apple-health')
@@ -3678,11 +3720,15 @@ def load_appearance_policy() -> dict:
         if merged['defaultTheme'] not in merged['themes']:
             merged['defaultTheme'] = merged['themes'][0]
         roles[role] = parse_decimals(merged)
-    return {'roles': roles, 'updatedAt': item.get('updatedAt'), 'updatedBy': item.get('updatedBy')}
+    mascot = item.get('mascot')
+    return {'roles': roles, 'mascot': True if not isinstance(mascot, bool) else mascot,
+            'updatedAt': item.get('updatedAt'), 'updatedBy': item.get('updatedBy')}
 
 
 class AppearancePolicyPayload(BaseModel):
     roles: Dict[str, Dict[str, Any]]
+    # One brand-wide switch, not a per-role limit: omitted = keep the current setting.
+    mascot: Optional[bool] = None
 
 
 @app.get("/settings/appearance")
@@ -3690,7 +3736,13 @@ def get_my_appearance_policy(user: dict = Depends(require_roles('CLIENT', 'COACH
     """The caller's own slice. Admins are never restricted (policy is None)."""
     role = user.get('role')
     pol = load_appearance_policy()
-    return {'role': role, 'policy': pol['roles'].get(role), 'updatedAt': pol['updatedAt']}
+    return {'role': role, 'policy': pol['roles'].get(role), 'mascot': pol['mascot'], 'updatedAt': pol['updatedAt']}
+
+
+@app.get("/settings/branding")
+def get_public_branding():
+    """Brand switches the sign-in screen needs before anyone has a session."""
+    return {'mascot': load_appearance_policy()['mascot']}
 
 
 @app.get("/admin/settings/appearance")
@@ -3700,7 +3752,8 @@ def admin_get_appearance_policy(user: dict = Depends(require_roles('ADMIN'))):
 
 @app.put("/admin/settings/appearance")
 def admin_save_appearance_policy(payload: AppearancePolicyPayload, user: dict = Depends(require_roles('ADMIN'))):
-    current = load_appearance_policy()['roles']
+    previous = load_appearance_policy()
+    current = previous['roles']
     unknown = [r for r in payload.roles if r not in APPEARANCE_ROLES]
     if unknown:
         raise HTTPException(status_code=400, detail='Unknown role.')
@@ -3712,7 +3765,9 @@ def admin_save_appearance_policy(payload: AppearancePolicyPayload, user: dict = 
         else:
             roles[role] = current[role]
     ts = now_iso()
-    table.put_item(Item=to_dynamo({**APPEARANCE_KEY, 'type': 'SETTINGS', 'roles': roles, 'updatedAt': ts,
+    mascot = previous['mascot'] if payload.mascot is None else bool(payload.mascot)
+    table.put_item(Item=to_dynamo({**APPEARANCE_KEY, 'type': 'SETTINGS', 'roles': roles, 'mascot': mascot,
+                                   'updatedAt': ts,
                                    'updatedBy': user.get('userCode') or short_id(user['pk'])}))
     return load_appearance_policy()
 

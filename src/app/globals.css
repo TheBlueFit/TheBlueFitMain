@@ -51,6 +51,24 @@
 }
 
 
+/* ===== Brand mascot ================================================== */
+.bf-mascot {
+  display: block;
+  flex: 0 0 auto;
+  object-fit: cover;
+  object-position: center 30%;
+  border-radius: 50%;
+  background: #171c2e;
+}
+.bf-mascot--square { border-radius: var(--radius-lg); object-position: center 32%; }
+.bf-mascot--framed {
+  border: 2px solid rgb(var(--gold-rgb) / 0.55);
+  box-shadow:
+    0 0 0 5px rgb(var(--ink-rgb) / 0.04),
+    0 14px 36px rgb(var(--shadow-rgb) / 0.55),
+    0 0 30px rgb(var(--gold-rgb) / 0.2);
+}
+
 .glazy-title {
   color: var(--text-primary);
   font-weight: 800;
@@ -59,7 +77,11 @@
     0px 2px 4px rgb(var(--shadow-rgb) / 0.8),
     0px 0px 24px rgb(var(--gold-rgb) / 0.25);
 }
+/* Admin brand switch: the attribute is set before first paint from the cached setting. */
+:root[data-mascot="0"] .bf-mascot,
+:root[data-mascot="0"] .bf-mascot-wrap { display: none; }
 :root[data-theme="light"] .glazy-title { text-shadow: none; }
+:root[data-theme="light"] .bf-mascot--framed { border-color: rgb(var(--gold-rgb) / 0.45); }
 
 :root {
   --background: oklch(1 0 0);

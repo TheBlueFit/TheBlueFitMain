@@ -25,6 +25,8 @@ export interface HealthReading {
   sleepHours?: number;
   calories?: number;
   heartRate?: number;
+  /** kilometres walked / run today */
+  distanceKm?: number;
   lastSynced?: string;
   range?: SyncRange;
 }
@@ -36,7 +38,7 @@ export interface SyncSnapshot {
 }
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL || "").replace(/\/$/, "");
-const READ_TYPES = ["steps", "sleep", "calories", "heartRate"];
+const READ_TYPES = ["steps", "sleep", "calories", "heartRate", "distance"];
 /** Opening the app twice within this window only syncs once. */
 export const AUTO_SYNC_MIN_GAP_MS = 2 * 60 * 1000;
 
@@ -355,12 +357,14 @@ async function readRange(range: SyncRange): Promise<Omit<HealthReading, "lastSyn
   // "Last night" belongs to today: look back to 18:00 the evening before.
   const sleepStart = new Date(start.getTime() - 6 * 3_600_000);
 
-  const [steps, calories, hr, sleep] = await Promise.all([
+  const [steps, calories, hr, sleep, distanceMeters] = await Promise.all([
     aggregate(Health, "steps", "sum", start, end),
     aggregate(Health, "calories", "sum", start, end),
     aggregate(Health, "heartRate", "average", start, end),
     sleepHoursBetween(Health, sleepStart, end),
+    aggregate(Health, "distance", "sum", start, end),
   ]);
+  // The plugin reports distance in metres; the app stores kilometres.
 
   // For 7 / 30 days the card shows per-day averages so the numbers stay comparable with the daily goals.
   const per = (v?: number) => (v == null ? undefined : Math.round(v / days));
@@ -370,6 +374,9 @@ async function readRange(range: SyncRange): Promise<Omit<HealthReading, "lastSyn
     calories: range === "today" ? (calories == null ? undefined : Math.round(calories)) : per(calories),
     sleepHours: range === "today" ? (sleep == null ? undefined : Math.round(sleep * 10) / 10) : sleepPer,
     heartRate: hr == null ? undefined : Math.round(hr),
+    distanceKm: distanceMeters == null
+      ? undefined
+      : Math.round((range === "today" ? distanceMeters : distanceMeters / days) / 10) / 100,
     range,
   };
 }
@@ -378,9 +385,20 @@ async function readRange(range: SyncRange): Promise<Omit<HealthReading, "lastSyn
 async function saveToday(data: Omit<HealthReading, "lastSynced" | "range">): Promise<boolean> {
   const token = authSession.get()?.token;
   if (!token || !API_BASE_URL) return false;
-  const body: Record<string, unknown> = { date: getLocalDateISO() };
+  const android = isAndroid();
+  const body: Record<string, unknown> = {
+    date: getLocalDateISO(),
+    platform: android ? "android" : Capacitor.getPlatform() === "ios" ? "ios" : "web",
+  };
+  // On Android the server only accepts numbers that really came from Health Connect (see save_health_metrics).
+  if (android) {
+    body.source = "health-connect";
+    body.provider = HEALTH_CONNECT_PACKAGE;
+    body.syncMode = "automated";
+    body.sensorTimestamp = new Date().toISOString();
+  }
   let any = false;
-  for (const k of ["steps", "sleepHours", "calories", "heartRate"] as const) {
+  for (const k of ["steps", "sleepHours", "calories", "heartRate", "distanceKm"] as const) {
     if (finite(data[k])) {
       body[k] = data[k];
       any = true;

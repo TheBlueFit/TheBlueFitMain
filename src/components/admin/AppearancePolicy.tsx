@@ -25,18 +25,20 @@ export default function AppearancePolicy() {
   const [data, setData] = useState<AppearancePolicyAll | null>(null);
   const [role, setRole] = useState<RoleKey>("CLIENT");
   const [draft, setDraft] = useState<Record<RoleKey, RolePolicy> | null>(null);
+  // Brand-wide, not per role: the mascot appears everywhere or nowhere.
+  const [mascot, setMascot] = useState(true);
   const [resetNow, setResetNow] = useState<Record<RoleKey, boolean>>({ CLIENT: false, COACH: false });
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   useEffect(() => {
     dashboardAPI.getAppearancePolicy()
-      .then((d) => { setData(d); setDraft(JSON.parse(JSON.stringify(d.roles))); })
+      .then((d) => { setData(d); setDraft(JSON.parse(JSON.stringify(d.roles))); setMascot(d.mascot !== false); })
       .catch((e) => setMsg({ ok: false, text: e.message || "Could not load settings." }));
   }, []);
 
   const p = draft?.[role];
-  const dirty = useMemo(() => !!data && !!draft && (JSON.stringify(data.roles) !== JSON.stringify(draft) || resetNow.CLIENT || resetNow.COACH), [data, draft, resetNow]);
+  const dirty = useMemo(() => !!data && !!draft && (JSON.stringify(data.roles) !== JSON.stringify(draft) || resetNow.CLIENT || resetNow.COACH || data.mascot !== mascot), [data, draft, resetNow, mascot]);
 
   const patch = (changes: Partial<RolePolicy>) => { setMsg(null); setDraft((d) => d && ({ ...d, [role]: { ...d[role], ...changes } })); };
 
@@ -56,10 +58,10 @@ export default function AppearancePolicy() {
     try {
       const roles: any = {};
       (["CLIENT", "COACH"] as RoleKey[]).forEach((r) => { roles[r] = { ...draft[r], resetNow: resetNow[r] }; });
-      const saved = await dashboardAPI.saveAppearancePolicy(roles);
-      setData(saved); setDraft(JSON.parse(JSON.stringify(saved.roles)));
+      const saved = await dashboardAPI.saveAppearancePolicy(roles, mascot);
+      setData(saved); setDraft(JSON.parse(JSON.stringify(saved.roles))); setMascot(saved.mascot !== false);
       setResetNow({ CLIENT: false, COACH: false });
-      setMsg({ ok: true, text: "Saved. People get the new theme on their next app refresh (within minutes, or on next open)." });
+      setMsg({ ok: true, text: "Saved. People get the new look on their next app refresh (within minutes, or on next open)." });
     } catch (e: any) { setMsg({ ok: false, text: e.message || "Could not save." }); }
     finally { setSaving(false); }
   };
@@ -73,6 +75,15 @@ export default function AppearancePolicy() {
       <p style={{ fontSize: 13, color: "var(--text-secondary)", lineHeight: 1.55, marginBottom: 16 }}>
         Five themes, nothing else. Choose which ones clients and coaches may use, and the one they start with. Admins are never restricted. Changes apply without an app update.
       </p>
+
+      <div className="macro-pill" style={{ flexDirection: "column", alignItems: "stretch", gap: 16, padding: 16, marginBottom: 16 }}>
+        <Switch
+          label="Show the mascot"
+          hint="The bull-skull coach on the sign-in screen, in the app header and in empty conversations. Off = text and icons only, for everyone."
+          checked={mascot}
+          onChange={(v) => { setMsg(null); setMascot(v); }}
+        />
+      </div>
 
       <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
         {(["CLIENT", "COACH"] as RoleKey[]).map((r) => (
@@ -123,7 +134,7 @@ export default function AppearancePolicy() {
       {msg && <div className={msg.ok ? undefined : "error-banner"} style={msg.ok ? { color: "var(--accent-green)", fontSize: 13, marginTop: 14 } : { marginTop: 14 }}>{msg.text}</div>}
 
       <button type="button" className="btn-primary" onClick={save} disabled={saving || !dirty} style={{ marginTop: 16, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, opacity: dirty ? 1 : 0.55 }}>
-        {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />} {saving ? "Saving…" : "Save for clients and coaches"}
+        {saving ? <Loader2 size={16} className="spin" /> : <Save size={16} />} {saving ? "Saving…" : "Save appearance"}
       </button>
       {data?.updatedAt && <p style={{ fontSize: 11, color: "var(--text-secondary)", marginTop: 10, textAlign: "center" }}>Last saved {new Date(data.updatedAt).toLocaleString()}{data.updatedBy ? ` by ${data.updatedBy}` : ""}</p>}
     </div>

@@ -70,4 +70,19 @@ M.admin_save_appearance_policy(M.AppearancePolicyPayload(roles=off), admin)
 forced = M.get_my_appearance_policy(client)["policy"]
 check("locked role still receives a theme list", forced["allowCustomize"] is False and forced["themes"] == ["forest"])
 
+print("== mascot brand switch ==")
+check("the mascot is on by default", M.admin_get_appearance_policy(admin)["mascot"] is True)
+check("clients read the mascot switch", M.get_my_appearance_policy(client)["mascot"] is True)
+check("the sign-in screen can read it before sign-in", M.get_public_branding()["mascot"] is True)
+
+mascot_roles = copy.deepcopy(M.admin_get_appearance_policy(admin)["roles"])
+off = M.admin_save_appearance_policy(M.AppearancePolicyPayload(roles=mascot_roles, mascot=False), admin)
+check("the admin can switch the mascot off", off["mascot"] is False)
+check("the public sign-in screen follows the admin", M.get_public_branding()["mascot"] is False)
+check("saving themes alone keeps the mascot off",
+      M.admin_save_appearance_policy(M.AppearancePolicyPayload(roles=mascot_roles), admin)["mascot"] is False)
+check("the mascot can be switched back on",
+      M.admin_save_appearance_policy(M.AppearancePolicyPayload(roles=mascot_roles, mascot=True), admin)["mascot"] is True)
+check("the theme policy is untouched by the mascot switch", M.get_my_appearance_policy(client)["policy"]["themes"] == ["forest"])
+
 print(f"\n{ok} passed, {bad} failed"); raise SystemExit(1 if bad else 0)

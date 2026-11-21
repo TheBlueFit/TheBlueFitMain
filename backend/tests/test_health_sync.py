@@ -135,7 +135,7 @@ check(
     "Manual step override without provider rejected -> 400",
     status_of(
         M.save_health_metrics,
-        M.HealthMetricsPayload(steps=12000, calories=500, date=today, source="manual"),
+        M.HealthMetricsPayload(steps=12000, calories=500, date=today, source="manual", platform="android"),
         user=user,
     )
     == 400,

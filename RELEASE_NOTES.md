@@ -55,3 +55,14 @@ Login/persistence, theme toggle, daily log → coach steps, two-way chat with un
 - **Admin two-factor (authenticator app)** – Admin → Security. Enter the setup key in Google Authenticator / Authy / 1Password, confirm one code, and keep the 8 one-time backup codes. With it on, a password alone cannot open the dashboard; switching it off needs the password *and* a current code.
 - **AWS WAF on the API** – one IP may make 60 sign-in requests in five minutes; everything else passes straight through. Ships with the stack (`backend/template.yaml`).
 - **Sessions** – 7-day tokens that slide forward daily while the app is in use, strict token-claim checks (signature, algorithm, role, issue/expiry dates), per-IP limits on sign-in and health ingest, and security headers on both the API and the static site.
+
+## Brand mascot with an admin switch (new)
+- **The character**: a flat-vector bull-skull coach, generated in three poses (portrait, full body, thumbs-up) on the app's navy. It shows on the sign-in card, in the app header, and in the two empty message states. Assets live in `public/mascot/`; the style decision is documented in `design/mascot.html`.
+- **Admin switch**: Admin → Appearance → **Show the mascot**. One brand-wide setting (not per role) for the sign-in screen, header and empty chats. The choice is cached on the device and applied before first paint, so there is no flash and no reload needed. Off = text and icons only.
+- **Public endpoint**: `GET /settings/branding` lets the sign-in screen read the switch before anyone has a session. Backend deploy required.
+
+## Android health sync is now verified (fix)
+- Android writes must come from Health Connect: the server accepts an automated sync only from the trusted `com.google.android.apps.healthdata` package in automated mode, and rejects hand-typed steps/sleep from an Android client. Verified snapshots are stored with `source`, `provider`, `platform`, `syncMode`, `sensorTimestamp` and `verified`. iPhone and web athletes keep entering numbers by hand.
+- **Distance** is stored per day (`distanceKm`) alongside steps, sleep, calories and heart rate, and the Android app reads it from Health Connect too.
+- On Android the Daily log's steps/sleep boxes are read-only with a note to use Sync; water is still typed in.
+- Tests: `backend/tests/test_health_sync.py` (31), `test_v2_features.py` (81), `test_appearance.py` (27), `test_new_features.py` (51), `test_mfa.py` (26) all pass.

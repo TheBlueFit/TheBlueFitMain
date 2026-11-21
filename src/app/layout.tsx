@@ -24,6 +24,7 @@ import { authSession, dashboardAPI, sessionExpired, UserSession } from "@/servic
 import ThemeProvider, { ThemeToggle, THEME_INIT_SCRIPT, useTheme } from "@/components/shell/ThemeProvider";
 import { AppContext } from "@/components/shell/AppContext";
 import MobilePermissionsGate from "@/components/shared/MobilePermissionsGate";
+import Mascot from "@/components/shared/Mascot";
 import HealthAutoSync from "@/components/client/HealthAutoSync";
 import PushRegistrar from "@/components/shell/PushRegistrar";
 import WorkoutAlertManager from "@/components/client/WorkoutAlertManager";
@@ -398,8 +399,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <div className="app-container">
           <header className="mobile-header">
             <span className="glazy-title" style={{ fontSize: "18px", display: "inline-flex", alignItems: "center", gap: 10 }}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src="/icons/logo-round-128.png" alt="" width={30} height={30} style={{ borderRadius: "50%", display: "block" }} />
+              <Mascot size={30} framed={false} />
               The Blue Fit{session?.userCode ? ` • ${session.userCode}` : ""}
             </span>
           </header>

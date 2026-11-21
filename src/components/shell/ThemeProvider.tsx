@@ -3,7 +3,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { Palette } from "lucide-react";
 import {
-  APPEARANCE_INIT_SCRIPT, applyLook, clampLook, DEFAULT_LOOK, isThemeId, Look, POLICY_KEY, presetLook, readLookRaw,
+  APPEARANCE_INIT_SCRIPT, applyLook, clampLook, DEFAULT_LOOK, isThemeId, Look, MASCOT_KEY, POLICY_KEY, presetLook, readLookRaw,
   RESET_KEY, RolePolicy, saveLook, themeOf, ThemeId, THEMES,
 } from "@/lib/look";
 import { authSession, dashboardAPI } from "@/services/api";
@@ -51,19 +51,35 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
   const [policy, setPolicy] = useState<RolePolicy | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
-  // first client render: read the saved theme and the last policy we saw for this person
+  /** The admin's brand-wide mascot switch: hide/show everywhere, and cache it for the next first paint. */
+  const applyMascot = useCallback((on: boolean) => {
+    try { localStorage.setItem(MASCOT_KEY, on ? "1" : "0"); } catch {}
+    document.documentElement.setAttribute("data-mascot", on ? "1" : "0");
+  }, []);
+
+  const refreshBranding = useCallback(async () => {
+    try { const res = await dashboardAPI.getPublicBranding(); applyMascot(res.mascot !== false); } catch { /* offline: keep the cached switch */ }
+  }, [applyMascot]);
+
+  // first client render: read the saved theme, the last policy and the mascot switch we saw
   useEffect(() => {
     setRaw(readLookRaw());
     setPolicy(readCachedPolicy());
-  }, []);
+    try {
+      const cachedMascot = localStorage.getItem(MASCOT_KEY);
+      if (cachedMascot === "0" || cachedMascot === "1") applyMascot(cachedMascot === "1");
+    } catch { /* ignore */ }
+  }, [applyMascot]);
 
   // ---- admin policy: fetch for the signed-in role, keep a cache for the next first paint ----
   const refreshPolicy = useCallback(async () => {
     const session = authSession.get();
-    if (!session?.token) { try { localStorage.removeItem(POLICY_KEY); } catch {} setPolicy(null); return; }
-    if (session.role === "ADMIN") { try { localStorage.removeItem(POLICY_KEY); } catch {} setPolicy(null); return; }
+    // Signed out (sign-in screen) and admins (never restricted) still get the brand switches.
+    if (!session?.token) { try { localStorage.removeItem(POLICY_KEY); } catch {} setPolicy(null); refreshBranding(); return; }
+    if (session.role === "ADMIN") { try { localStorage.removeItem(POLICY_KEY); } catch {} setPolicy(null); refreshBranding(); return; }
     try {
       const res = await dashboardAPI.getMyAppearancePolicy();
+      applyMascot(res.mascot !== false);
       const pol = res.policy;
       try { if (pol) localStorage.setItem(POLICY_KEY, JSON.stringify({ role: res.role, policy: pol })); else localStorage.removeItem(POLICY_KEY); } catch {}
       if (pol) {
@@ -76,7 +92,7 @@ export default function ThemeProvider({ children }: { children: React.ReactNode 
       }
       setPolicy(pol);
     } catch { /* offline: keep the cached policy */ }
-  }, []);
+  }, [applyMascot, refreshBranding]);
 
   useEffect(() => {
     refreshPolicy();

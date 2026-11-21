@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { MessageSquare } from "lucide-react";
 import { authSession, dashboardAPI } from "@/services/api";
+import Mascot from "@/components/shared/Mascot";
 import ChatThread from "@/components/messaging/ChatThread";
 
 export default function ClientMessagesPage() {
@@ -24,7 +24,7 @@ export default function ClientMessagesPage() {
     return (
       <div className="bf-chat-shell">
         <div className="bf-chat-empty">
-          <MessageSquare size={28} />
+          <Mascot variant="cheer" size={92} square framed={false} />
           <strong style={{ color: "var(--text-primary)" }}>No coach assigned yet</strong>
           <span>Once the admin assigns a coach to you, your conversation will appear here.</span>
         </div>

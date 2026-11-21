@@ -426,7 +426,7 @@ export interface AdminMonitor {
   recentEvents: { type: 'login' | 'checkin' | 'workout'; userId: string; name: string; role: string; at: string }[];
 }
 
-export interface AppearancePolicyAll { roles: { CLIENT: RolePolicy; COACH: RolePolicy }; updatedAt?: string | null; updatedBy?: string | null }
+export interface AppearancePolicyAll { roles: { CLIENT: RolePolicy; COACH: RolePolicy }; mascot: boolean; updatedAt?: string | null; updatedBy?: string | null }
 export interface AdminSecurityStatus { mfaEnabled: boolean; mfaPending: boolean; recoveryCodesRemaining: number }
 export interface CleanupPreview {
   days: number; cutoff: string; parkedFailed: number;
@@ -562,10 +562,18 @@ export const dashboardAPI = {
   cleanupHistory: () => apiFetch<{ runs: CleanupRunRow[] }>('/admin/cleanup/history'),
 
   // --- APPEARANCE POLICY ---
-  getMyAppearancePolicy: () => apiFetch<{ role: string; policy: RolePolicy | null; updatedAt?: string | null }>('/settings/appearance'),
+  getMyAppearancePolicy: () => apiFetch<{ role: string; policy: RolePolicy | null; mascot: boolean; updatedAt?: string | null }>('/settings/appearance'),
+  /** Public: the sign-in screen needs the mascot switch before anyone has a session. */
+  getPublicBranding: () => apiFetch<{ mascot: boolean }>('/settings/branding'),
   getAppearancePolicy: () => apiFetch<AppearancePolicyAll>('/admin/settings/appearance'),
-  saveAppearancePolicy: (roles: Partial<Record<'CLIENT' | 'COACH', Partial<RolePolicy> & { resetNow?: boolean }>>) =>
-    apiFetch<AppearancePolicyAll>('/admin/settings/appearance', { method: 'PUT', body: JSON.stringify({ roles }) }),
+  saveAppearancePolicy: (
+    roles: Partial<Record<'CLIENT' | 'COACH', Partial<RolePolicy> & { resetNow?: boolean }>>,
+    mascot?: boolean,
+  ) =>
+    apiFetch<AppearancePolicyAll>('/admin/settings/appearance', {
+      method: 'PUT',
+      body: JSON.stringify({ roles, ...(typeof mascot === 'boolean' ? { mascot } : {}) }),
+    }),
   updateUser: (userId: string, payload: Record<string, any>) =>
     apiFetch<{ message: string; user: any }>(`/admin/users/${encodeURIComponent(userId)}`, {
       method: 'PUT',
@@ -730,8 +738,14 @@ export const dashboardAPI = {
     calories?: number;
     heartRate?: number;
     hydration?: number;
+    distanceKm?: number;
+    /** 'android' | 'ios' | 'web' — Android writes must be verified Health Connect data. */
+    platform?: string;
+    provider?: string;
+    syncMode?: 'automated' | 'manual';
+    sensorTimestamp?: string;
   }) =>
-    apiFetch<{ message: string }>('/athlete/health-metrics', {
+    apiFetch<{ message: string; date: string; verified?: boolean }>('/athlete/health-metrics', {
       method: 'PUT',
       body: JSON.stringify(data),
     }),

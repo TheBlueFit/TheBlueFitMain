@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>The Blue Fit — mascot style pick</title>
+<style>
+  :root {
+    --gold: #E5B869; --gold-rgb: 229 184 105; --ink-rgb: 255 255 255;
+    --navy: #171c2e; --orange: #F08A2E; --text: #ffffff; --muted: #8a8f9e;
+    --line: rgb(255 255 255 / .09);
+    font-family: "Outfit", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #07080b; color: var(--text); padding: 40px 24px 80px; }
+  .wrap { max-width: 1180px; margin: 0 auto; }
+  h1 { font-size: 30px; letter-spacing: -.5px; margin: 0 0 6px; }
+  h2 { font-size: 13px; letter-spacing: .16em; text-transform: uppercase; color: var(--gold); margin: 48px 0 16px; font-weight: 700; }
+  p { color: var(--muted); font-size: 14px; line-height: 1.6; max-width: 760px; margin: 0 0 12px; }
+  .grid { display: grid; gap: 16px; }
+  .cols-3 { grid-template-columns: repeat(3, minmax(0,1fr)); }
+  .cols-4 { grid-template-columns: repeat(4, minmax(0,1fr)); }
+  .card { background: #111111; border: 1px solid var(--line); border-radius: 18px; padding: 22px; }
+  .card h3 { font-size: 15px; margin: 0 0 8px; }
+  .tag { display: inline-block; font-size: 10px; letter-spacing: .12em; text-transform: uppercase;
+    padding: 4px 9px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .tag.pick { color: #08170e; background: #00E27B; border-color: #00E27B; font-weight: 700; }
+  .tag.no { color: #ffb3ae; border-color: rgb(255 69 58 / .5); }
+  .mascot { display: block; object-fit: cover; object-position: center 30%; border-radius: 50%; background: var(--navy); flex: 0 0 auto; }
+  .mascot.square { border-radius: 20px; object-position: center 32%; }
+  .framed { border: 2px solid rgb(var(--gold-rgb) / .55);
+    box-shadow: 0 0 0 5px rgb(var(--ink-rgb) / .04), 0 14px 36px rgb(0 0 0 / .55), 0 0 30px rgb(var(--gold-rgb) / .2); }
+  .ramp { display: flex; align-items: flex-end; gap: 22px; flex-wrap: wrap; }
+  .ramp figure { margin: 0; text-align: center; }
+  .ramp figcaption { font-size: 10px; color: var(--muted); margin-top: 8px; letter-spacing: .08em; }
+  .swatches { display: flex; gap: 14px; flex-wrap: wrap; }
+  .sw { font-size: 11px; color: var(--muted); }
+  .sw i { display: block; width: 72px; height: 44px; border-radius: 10px; margin-bottom: 6px; border: 1px solid var(--line); }
+
+  /* placement mocks */
+  .mock { background: #050607; border: 1px solid var(--line); border-radius: 20px; padding: 18px; display: flex; align-items: center; justify-content: center; min-height: 300px; }
+  .login { width: 100%; max-width: 330px; background: #0d0f14; border: 1px solid var(--line); border-radius: 20px; padding: 26px 22px; text-align: center; }
+  .login img { margin-bottom: 14px; }
+  .login h4 { margin: 0 0 6px; font-size: 24px; letter-spacing: -.4px;
+    background: linear-gradient(90deg, var(--gold), #fff 60%, var(--gold)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .login p { font-size: 12px; margin: 0 0 18px; }
+  .field { height: 42px; border: 1px solid var(--line); border-radius: 8px; background: rgb(255 255 255 / .03); margin-bottom: 12px; }
+  .cta { height: 44px; border-radius: 10px; background: linear-gradient(180deg, #f2cd8c, var(--gold)); }
+
+  .header-mock { width: 100%; max-width: 360px; background: #0d0f14; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; }
+  .bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-weight: 800; font-size: 16px; }
+  .bar small { font-weight: 600; color: var(--muted); font-size: 11px; }
+  .chat-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 34px 20px 40px; text-align: center; font-size: 12px; color: var(--muted); }
+  .chat-empty strong { color: #fff; font-size: 14px; }
+  .chat-empty.tall { padding: 24px 20px 26px; }
+
+  footer { margin-top: 56px; font-size: 12px; color: #5b6070; }
+  @media (max-width: 860px) { .cols-3, .cols-4 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>The Blue Fit mascot — style decision &amp; build</h1>
+  <p>Your reference sheets showed the same character in three finishes. I picked one finish and made three app-ready poses on the app's own navy so they drop straight into the UI.</p>
+
+  <h2>The three finishes from your sheets</h2>
+  <div class="grid cols-3">
+    <div class="card">
+      <span class="tag no">Not used</span>
+      <h3 style="margin-top:12px">Cinematic render</h3>
+      <p>Warm gym lighting, soft shading, detailed anatomy. Gorgeous as a poster, but the internal detail turns to mush below ~120px and it fights the app's flat dark surfaces.</p>
+    </div>
+    <div class="card">
+      <span class="tag no">Not used</span>
+      <h3 style="margin-top:12px">Glossy illustration</h3>
+      <p>Clean but still airbrushed — gradients and highlights make him look like a different character next to the app's gold monogram and outlined icons.</p>
+    </div>
+    <div class="card" style="border-color: rgb(0 226 123 / .45)">
+      <span class="tag pick">Picked</span>
+      <h3 style="margin-top:12px">Flat vector / bold outline</h3>
+      <p>Thick black keyline, two-tone cel shading, flat fills. Reads instantly from 24px to full width, holds up on every one of the five themes, and matches the app's existing line-icon language.</p>
+    </div>
+  </div>
+
+  <h2>The set</h2>
+  <div class="grid cols-3">
+    <div class="card" style="display:flex; gap:16px; align-items:center">
+      <img class="mascot framed" src="img/mascot-avatar.jpg" width="96" height="96" alt="Portrait pose" />
+      <div><h3 style="margin:0 0 6px">Portrait</h3><p style="margin:0;font-size:12px">Sign-in hero, profile moments.</p></div>
+    </div>
+    <div class="card" style="display:flex; gap:16px; align-items:center">
+      <img class="mascot square" src="img/mascot-hero.jpg" width="86" height="114" alt="Full-body pose" />
+      <div><h3 style="margin:0 0 6px">Full body</h3><p style="margin:0;font-size:12px">Empty conversation pane.</p></div>
+    </div>
+    <div class="card" style="display:flex; gap:16px; align-items:center">
+      <img class="mascot square" src="img/mascot-thumbs-up.jpg" width="96" height="96" alt="Thumbs-up pose" />
+      <div><h3 style="margin:0 0 6px">Encouragement</h3><p style="margin:0;font-size:12px">Empty states, “you’re all set” moments.</p></div>
+    </div>
+  </div>
+
+  <h2>Size ramp</h2>
+  <div class="card">
+    <div class="ramp">
+      <figure><img class="mascot" src="img/mascot-avatar.jpg" width="24" height="24" alt="" /><figcaption>24</figcaption></figure>
+      <figure><img class="mascot" src="img/mascot-avatar.jpg" width="32" height="32" alt="" /><figcaption>32</figcaption></figure>
+      <figure><img class="mascot" src="img/mascot-avatar.jpg" width="48" height="48" alt="" /><figcaption>48</figcaption></figure>
+      <figure><img class="mascot" src="img/mascot-avatar.jpg" width="64" height="64" alt="" /><figcaption>64</figcaption></figure>
+      <figure><img class="mascot framed" src="img/mascot-avatar.jpg" width="96" height="96" alt="" /><figcaption>96 · ring</figcaption></figure>
+      <figure><img class="mascot framed" src="img/mascot-avatar.jpg" width="116" height="116" alt="" /><figcaption>116 · sign-in</figcaption></figure>
+    </div>
+  </div>
+
+  <h2>In place</h2>
+  <div class="grid cols-3">
+    <div class="mock">
+      <div class="login">
+        <img class="mascot framed" src="img/mascot-avatar.jpg" width="116" height="116" alt="" />
+        <h4>The Blue Fit</h4>
+        <p>Sign in with your Admin-issued ID and password.</p>
+        <div class="field"></div>
+        <div class="field"></div>
+        <div class="cta"></div>
+      </div>
+    </div>
+    <div class="mock">
+      <div class="header-mock">
+        <div class="bar"><img class="mascot" src="img/mascot-avatar.jpg" width="30" height="30" alt="" /> The Blue Fit <small>• CLS001</small></div>
+        <div class="chat-empty" style="padding:26px 20px">Navigation, tracker and schedule screens sit under this header.</div>
+      </div>
+    </div>
+    <div class="mock">
+      <div class="header-mock" style="padding-bottom:8px">
+        <div class="chat-empty"><img class="mascot square" src="img/mascot-thumbs-up.jpg" width="92" height="92" alt="" /><strong>No coach assigned yet</strong><span>Once the admin assigns a coach to you, your conversation will appear here.</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Palette fit</h2>
+  <div class="card"><div class="swatches">
+    <div class="sw"><i style="background:#E5B869"></i>#E5B869 — brand gold (ring, glow)</div>
+    <div class="sw"><i style="background:#171c2e"></i>#171C2E — art backdrop, matches app ink</div>
+    <div class="sw"><i style="background:#F08A2E"></i>#F08A2E — bull skull accent</div>
+    <div class="sw"><i style="background:#0d0f14"></i>#0D0F14 — card surface</div>
+  </div></div>
+
+  <footer>Flat vector mascot set · The Blue Fit · assets in <code>public/mascot/</code></footer>
+</div>
+</body>
+</html>

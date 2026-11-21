@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { CheckCircle2, Droplets, Footprints, Moon, RefreshCw, Smartphone } from "lucide-react";
+import { Capacitor } from "@capacitor/core";
 import { dashboardAPI, getLocalDateISO } from "@/services/api";
 import { timeAgo } from "@/lib/format";
 import { usePermissions } from "@/components/shared/MobilePermissionsGate";
@@ -24,6 +25,7 @@ export default function DailyLogCard({
   values, source, updatedAt, onSaved,
 }: { values: DailyValues; source?: string | null; updatedAt?: string | null; onSaved: (v: DailyValues) => void }) {
   const { isNative } = usePermissions();
+  const platform = isNative ? Capacitor.getPlatform() : "web";
   const [steps, setSteps] = useState("");
   const [sleep, setSleep] = useState("");
   const [water, setWater] = useState("");
@@ -41,14 +43,19 @@ export default function DailyLogCard({
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     setMsg(null);
-    const payload: DailyValues = { steps: numOrUndef(steps), sleepHours: numOrUndef(sleep), hydration: numOrUndef(water) };
+    // On Android the server accepts steps/sleep only from Health Connect, so only water is typed in there.
+    const payload: DailyValues = {
+      steps: sensorsReadOnly ? undefined : numOrUndef(steps),
+      sleepHours: sensorsReadOnly ? undefined : numOrUndef(sleep),
+      hydration: numOrUndef(water),
+    };
     if (payload.steps == null && payload.sleepHours == null && payload.hydration == null) {
       setMsg({ tone: "error", text: "Enter at least one value to save." });
       return;
     }
     setBusy(true);
     try {
-      await dashboardAPI.saveHealthMetrics({ ...payload, date: getLocalDateISO(), source: "manual" } as any);
+      await dashboardAPI.saveHealthMetrics({ ...payload, date: getLocalDateISO(), source: "manual", platform } as any);
       onSaved(payload);
       setMsg({ tone: "success", text: "Saved. Your coach can see this now." });
     } catch (err: any) {
@@ -96,6 +103,9 @@ export default function DailyLogCard({
     }
   };
 
+  /** Android reads steps/sleep from Health Connect, so those boxes cannot be typed in there. */
+  const sensorsReadOnly = isNative && platform === "android";
+
   const field: React.CSSProperties = { width: "100%", padding: "13px 14px", background: "rgb(var(--well-rgb) / 0.4)", border: "1px solid var(--border-subtle)", borderRadius: "var(--radius-sm)", color: "var(--text-primary)", outline: "none", fontSize: 15, marginTop: 8, fontFamily: "inherit" };
   const tone = (t: "success" | "error") => t === "success"
     ? { background: "rgb(var(--green-rgb) / 0.1)", border: "1px solid rgb(var(--green-rgb) / 0.3)", color: "var(--accent-green)" }
@@ -120,17 +130,23 @@ export default function DailyLogCard({
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 14 }}>
         <div className="input-group">
           <label className="label-text" htmlFor="log-steps"><Footprints size={12} style={{ verticalAlign: "-2px" }} /> Steps</label>
-          <input id="log-steps" inputMode="numeric" type="number" min={0} max={200000} step={1} value={steps} onChange={(e) => setSteps(e.target.value)} placeholder="e.g. 8500" style={field} />
+          <input id="log-steps" inputMode="numeric" type="number" min={0} max={200000} step={1} value={steps} onChange={(e) => setSteps(e.target.value)} placeholder="e.g. 8500" style={{ ...field, opacity: sensorsReadOnly ? 0.55 : 1 }} disabled={sensorsReadOnly} />
         </div>
         <div className="input-group">
           <label className="label-text" htmlFor="log-sleep"><Moon size={12} style={{ verticalAlign: "-2px" }} /> Sleep (hours)</label>
-          <input id="log-sleep" inputMode="decimal" type="number" min={0} max={24} step={0.1} value={sleep} onChange={(e) => setSleep(e.target.value)} placeholder="e.g. 7.5" style={field} />
+          <input id="log-sleep" inputMode="decimal" type="number" min={0} max={24} step={0.1} value={sleep} onChange={(e) => setSleep(e.target.value)} placeholder="e.g. 7.5" style={{ ...field, opacity: sensorsReadOnly ? 0.55 : 1 }} disabled={sensorsReadOnly} />
         </div>
         <div className="input-group">
           <label className="label-text" htmlFor="log-water"><Droplets size={12} style={{ verticalAlign: "-2px" }} /> Water (litres)</label>
           <input id="log-water" inputMode="decimal" type="number" min={0} max={20} step={0.1} value={water} onChange={(e) => setWater(e.target.value)} placeholder="e.g. 2.5" style={field} />
         </div>
       </div>
+
+      {sensorsReadOnly && (
+        <p style={{ marginTop: 12, fontSize: 11.5, color: "var(--text-secondary)", lineHeight: 1.5 }}>
+          Steps and sleep come from Health Connect on Android — tap Sync to update them. Water can still be logged here.
+        </p>
+      )}
 
       {msg && <div style={{ marginTop: 14, padding: 12, borderRadius: "var(--radius-md)", fontSize: 13, ...tone(msg.tone) }}>{msg.text}</div>}
       <button type="submit" className="btn-primary" disabled={busy} style={{ marginTop: 16, width: "100%", padding: 14 }}>{busy ? "Saving…" : "Save today's log"}</button>

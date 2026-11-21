@@ -37,6 +37,8 @@ export const LOOK_KEY = "bluefit_look";
 export const THEME_KEY = "bluefit_theme";
 export const POLICY_KEY = "bluefit_policy";
 export const RESET_KEY = "bluefit_look_reset";
+/** "1" / "0": the admin's brand-wide mascot switch, cached so it applies before first paint. */
+export const MASCOT_KEY = "bluefit_mascot";
 
 /** primary replaces the gold role, secondary the green role. Light values are darker so text stays readable. */
 export const PALETTES: { id: PaletteId; label: string; dark: [RGB, RGB]; light: [RGB, RGB] }[] = [
@@ -270,4 +272,5 @@ var m=document.querySelector('meta[name="theme-color"]');if(m)m.setAttribute('co
 var f=${computeLookVars.toString()};var v=f(look,th,P);
 if(v){for(var n in v){r.style.setProperty(n,v[n])}}
 r.setAttribute('data-palette',look.palette);r.setAttribute('data-motion',look.motion);r.setAttribute('data-style',look.style);r.setAttribute('data-scene-on',look.scene==='off'?'0':'1');r.setAttribute('data-blur',look.blur);r.setAttribute('data-depth-mode',look.depth);
+var mv=ls('${MASCOT_KEY}');r.setAttribute('data-mascot',mv==='0'?'0':'1');
 }catch(e){}})();`;

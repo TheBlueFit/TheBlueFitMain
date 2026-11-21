@@ -2,10 +2,11 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { MessageSquare, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { ChatThread as ThreadRow, dashboardAPI } from "@/services/api";
 import ChatThread from "@/components/messaging/ChatThread";
 import { Avatar } from "@/components/shared/Presence";
+import Mascot from "@/components/shared/Mascot";
 import { timeAgo } from "@/lib/format";
 import { useApp } from "@/components/shell/AppContext";
 
@@ -72,7 +73,7 @@ function CoachMessages() {
           {selected ? (
             <ChatThread key={selected} clientId={selected} fallbackPeer={current?.peer ?? null} onBack={() => { open(null); load(); refreshUnread(); }} />
           ) : (
-            <div className="bf-chat-empty"><MessageSquare size={28} /><strong style={{ color: "var(--text-primary)" }}>Select a conversation</strong><span>{error || "Pick a client on the left to read and reply."}</span></div>
+            <div className="bf-chat-empty"><Mascot variant="hero" size={88} height={118} square framed={false} /><strong style={{ color: "var(--text-primary)" }}>Select a conversation</strong><span>{error || "Pick a client on the left to read and reply."}</span></div>
           )}
         </div>
       </div>
