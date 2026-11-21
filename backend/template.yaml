@@ -17,6 +17,7 @@ Parameters:
       Leave empty on a normal first deploy (the stack creates BlueFit-Table).
       If BlueFit-Table already exists in this account/region (for example the old stack was deleted and the
       table was kept), put its name here and the stack will use that table instead of trying to create it.
+
   FcmServiceAccountSecretArn:
     Type: String
     Default: ""
@@ -97,6 +98,8 @@ Resources:
   BlueFitHttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
+      # AWS WAFv2 does not support API Gateway HTTP APIs (v2).
+      # Abuse protection is handled by stage throttling here + per-IP sign-in limits in Lambda.
       DefaultRouteSettings:
         # Chat polling + the 45-second presence heartbeat from every open app share this limit.
         ThrottlingBurstLimit: 200
@@ -114,48 +117,6 @@ Resources:
           - DELETE
           - OPTIONS
         MaxAge: 600
-
-  # Holds a client back before a password spray ever reaches Lambda: one IP may make 60 sign-in
-  # requests in five minutes. Everything else passes straight through (DefaultAction: Allow).
-  AuthWaf:
-    Type: AWS::WAFv2::WebACL
-    Properties:
-      Name: bluefit-auth-waf
-      Scope: REGIONAL
-      DefaultAction:
-        Allow: {}
-      VisibilityConfig:
-        SampledRequestsEnabled: true
-        CloudWatchMetricsEnabled: true
-        MetricName: bluefit-auth-waf
-      Rules:
-        - Name: auth-endpoint-rate-limit
-          Priority: 0
-          Action:
-            Block: {}
-          Statement:
-            RateBasedStatement:
-              Limit: 60
-              AggregateKeyType: IP
-              ScopeDownStatement:
-                ByteMatchStatement:
-                  FieldToMatch:
-                    UriPath: {}
-                  PositionalConstraint: STARTS_WITH
-                  SearchString: /auth/
-                  TextTransformations:
-                    - Priority: 0
-                      Type: NONE
-          VisibilityConfig:
-            SampledRequestsEnabled: true
-            CloudWatchMetricsEnabled: true
-            MetricName: bluefit-auth-rate-limit
-
-  AuthWafAssociation:
-    Type: AWS::WAFv2::WebACLAssociation
-    Properties:
-      ResourceArn: !Sub "arn:aws:apigateway:${AWS::Region}::/apis/${BlueFitHttpApi}/stages/$default"
-      WebACLArn: !GetAtt AuthWaf.Arn
 
   CoreApiFunction:
     Type: AWS::Serverless::Function
@@ -204,7 +165,7 @@ Resources:
               Action:
                 - s3:GetObject
                 - s3:PutObject
-                - s3:DeleteObject   # storage cleanup removes the original after a verified WebP copy exists
+                - s3:DeleteObject # storage cleanup removes the original after a verified WebP copy exists
               Resource:
                 - !Sub "${ClientMediaBucket.Arn}/clients/*"
                 - !Sub "${ClientMediaBucket.Arn}/coaches/*"
