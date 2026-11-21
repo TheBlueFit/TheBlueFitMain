@@ -57,8 +57,8 @@ Login/persistence, theme toggle, daily log → coach steps, two-way chat with un
 - **Sessions** – 7-day tokens that slide forward daily while the app is in use, strict token-claim checks (signature, algorithm, role, issue/expiry dates), per-IP limits on sign-in and health ingest, and security headers on both the API and the static site.
 
 ## Brand mascot with an admin switch (new)
-- **The character**: a flat-vector bull-skull coach, generated in three poses (portrait, full body, thumbs-up) on the app's navy. It shows on the sign-in card, in the app header, and in the two empty message states. Assets live in `public/mascot/`; the style decision is documented in `design/mascot.html`.
-- **Admin switch**: Admin → Appearance → **Show the mascot**. One brand-wide setting (not per role) for the sign-in screen, header and empty chats. The choice is cached on the device and applied before first paint, so there is no flash and no reload needed. Off = text and icons only.
+- **The character**: a flat-vector bull-skull coach, generated in three poses (portrait, full body, thumbs-up) on the app's navy. It shows in the two empty message states only; the round logo on the sign-in card and in the header is unchanged. Assets live in `public/mascot/`; the style decision is documented in `design/mascot.html`.
+- **Admin switch**: Admin → Appearance → **Show the mascot**. One brand-wide setting (not per role) for the empty chats. The choice is cached on the device and applied before first paint, so there is no flash and no reload needed. Off = text and icons only.
 - **Public endpoint**: `GET /settings/branding` lets the sign-in screen read the switch before anyone has a session. Backend deploy required.
 
 ## Android health sync is now verified (fix)

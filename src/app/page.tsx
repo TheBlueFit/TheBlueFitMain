@@ -6,7 +6,6 @@ import type { ChangeEvent, FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Camera, Upload } from "lucide-react";
 import { authSession, dashboardAPI, sessionExpired, UserSession } from "@/services/api";
-import Mascot from "@/components/shared/Mascot";
 
 type SetupStep = 1 | 2 | 3;
 
@@ -224,9 +223,9 @@ export default function OpeningPortalPage() {
         {/* Header */}
         <div className="section-header" style={{ flexDirection: "column", alignItems: pendingUser ? "flex-start" : "center", gap: "4px", marginBottom: "32px", textAlign: pendingUser ? "left" : "center" }}>
           {!pendingUser && (
-            <div className="bf-mascot-wrap" style={{ marginBottom: 14 }}>
-              <Mascot size={116} alt="The Blue Fit coach" />
-            </div>
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src="/icons/logo-round.png" alt="The Blue Fit" width={116} height={116}
+              style={{ borderRadius: "50%", display: "block", marginBottom: 14, boxShadow: "0 8px 30px rgba(28,37,65,0.45)" }} />
           )}
           <h1 className="animated-gradient-text" style={{ fontSize: "32px", textTransform: "none" }}>
             {pendingUser ? `Welcome, ${pendingUser.name} (${pendingUser.userCode})` : "The Blue Fit"}
